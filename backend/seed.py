@@ -1,139 +1,233 @@
-# seed.py
-
+# seed.py  — FINAL DEMO SEEDER
 import random
-from datetime import datetime, date, time as dtime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
-from faker import Faker
+from app import create_app, db
+from models import (
+    User,
+    Patient,
+    Doctor,
+    Appointment,
+    Treatment,
+    DoctorAvailability,
+)
 
-from app import create_app
-from models import db, User, Patient, Doctor, Appointment, Treatment
+# -------------------------------------------------------------
+# CONFIG: tweak counts & ranges here
+# -------------------------------------------------------------
+NUM_DOCTORS = 10          # doctor1..doctor10
+NUM_PATIENTS = 60         # patient1..patient60
+DAYS_BACK = 10            # days before today
+DAYS_FORWARD = 20         # days after today
+APPOINTMENT_BOOKING_DENSITY = 0.45  # % of available slots that become appointments
 
-fake = Faker("en_IN")
+TIME_SLOTS = [
+    "09:00", "09:30", "10:00", "10:30",
+    "11:00", "11:30", "12:00",
+    "14:00", "14:30", "15:00", "15:30",
+    "16:00", "16:30",
+]
 
-# ----------------------------
-# Reference data
-# ----------------------------
+GENDERS = ["Male", "Female", "Other"]
+BLOOD_GROUPS = ["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"]
 
 SPECIALIZATIONS = [
-    "Cardiology",
-    "Orthopedics",
-    "Neurology",
-    "Pediatrics",
-    "General Medicine",
-    "Dermatology",
-    "ENT",
-    "Gastroenterology",
-    "Pulmonology",
-    "Psychiatry",
+    "General Physician",
+    "Cardiologist",
+    "Dermatologist",
+    "Orthopedic Surgeon",
+    "Pediatrician",
+    "Neurologist",
+    "ENT Specialist",
+    "Psychiatrist",
+    "Endocrinologist",
+    "Pulmonologist",
 ]
 
-DIAGNOSES = [
-    "Upper respiratory tract infection",
-    "Type 2 Diabetes Mellitus",
-    "Hypertension",
-    "Acute gastritis",
-    "Migraine",
-    "Allergic rhinitis",
-    "Low back pain",
-    "Viral fever",
-    "Anxiety disorder",
-    "Iron deficiency anemia",
+DOCTOR_NAMES = [
+    "Dr. Arjun Reddy",
+    "Dr. Sneha Iyer",
+    "Dr. Vivek Sharma",
+    "Dr. Meera Nair",
+    "Dr. Rahul Verma",
+    "Dr. Kavya Rao",
+    "Dr. Rohan Kulkarni",
+    "Dr. Priya Menon",
+    "Dr. Siddharth Jain",
+    "Dr. Anjali Deshmukh",
 ]
 
-MEDICINE_PATTERNS = [
-    "DOLO650-1-1-1 | AZITH500-1-0-0",
-    "METFORMIN500-0-1-1 | GLIMIPRIDE1-0-0-1",
-    "PANTOP40-1-0-1 | DIGENE-0-0-1",
-    "AMLO5-1-0-0 | ATOR20-0-0-1",
-    "LEVOCET5-0-0-1",
+PATIENT_FIRST_NAMES = [
+    "Amit", "Ananya", "Ravi", "Priya", "Kiran", "Swathi", "Rohit", "Shreya",
+    "Vivek", "Sneha", "Sanjay", "Divya", "Karthik", "Isha", "Nikhil", "Pooja",
+    "Tarun", "Neha", "Aravind", "Deepa", "Harsha", "Lavanya", "Manoj", "Soumya",
+    "Varun", "Keerthi", "Suresh", "Bhavya", "Sameer",
 ]
 
-TESTS_LIST = [
-    "CBC",
-    "Blood Sugar (F/PP)",
-    "Lipid Profile",
-    "LFT",
-    "KFT",
-    "X-Ray Chest",
-    "ECG",
-    "Vitamin D",
-    "Thyroid Profile",
+PATIENT_LAST_NAMES = [
+    "Reddy", "Sharma", "Gupta", "Iyer", "Nair", "Verma", "Patel",
+    "Kulkarni", "Menon", "Rao", "Jain", "Deshmukh", "Chowdary",
+    "Singh", "Yadav",
 ]
 
-PRECAUTIONS_LIST = [
-    "Drink plenty of water, avoid outside food.",
-    "Low salt, low oil diet and regular exercise.",
-    "Take adequate rest and avoid screen time at night.",
-    "Avoid cold drinks and very cold environments.",
-    "Do not skip medications; follow up if symptoms worsen.",
+REASONS = [
+    "Fever and body pain",
+    "Routine health checkup",
+    "Chest discomfort",
+    "Skin rashes and itching",
+    "Back and knee pain",
+    "Child vaccination",
+    "Frequent headaches",
+    "Anxiety and sleep issues",
+    "Cough and breathing difficulty",
+    "Diabetes follow-up",
+    "High blood pressure follow-up",
+    "Ear pain and discharge",
+    "Throat infection",
+]
+
+# -------------------------------------------------------------
+# Diagnoses, tests & prescriptions by specialization for realism
+# -------------------------------------------------------------
+DIAGNOSES_BY_SPEC = {
+    "General Physician": [
+        "Viral fever",
+        "Upper respiratory tract infection",
+        "Gastritis",
+        "Migraine",
+        "Acute gastroenteritis",
+    ],
+    "Cardiologist": [
+        "Hypertension",
+        "Stable angina",
+        "Borderline dyslipidemia",
+        "Palpitations – evaluation",
+    ],
+    "Dermatologist": [
+        "Allergic dermatitis",
+        "Acne vulgaris",
+        "Fungal skin infection",
+        "Urticaria",
+    ],
+    "Orthopedic Surgeon": [
+        "Osteoarthritis knee",
+        "Lumbar spondylosis",
+        "Shoulder impingement syndrome",
+        "Ankle sprain",
+    ],
+    "Pediatrician": [
+        "Viral fever – pediatric",
+        "Acute tonsillitis",
+        "Bronchiolitis (mild)",
+        "Routine vaccination visit",
+    ],
+    "Neurologist": [
+        "Migraine without aura",
+        "Tension-type headache",
+        "Peripheral neuropathy – evaluation",
+    ],
+    "ENT Specialist": [
+        "Acute otitis media",
+        "Allergic rhinitis",
+        "Pharyngitis",
+        "Chronic sinusitis (mild)",
+    ],
+    "Psychiatrist": [
+        "Generalized anxiety disorder",
+        "Mild depression",
+        "Insomnia",
+    ],
+    "Endocrinologist": [
+        "Type 2 diabetes – uncontrolled",
+        "Subclinical hypothyroidism",
+        "PCOS – evaluation",
+    ],
+    "Pulmonologist": [
+        "Mild asthma",
+        "Acute bronchitis",
+        "Suspected COVID-19 – mild",
+    ],
+}
+
+TESTS_BY_DIAGNOSIS = {
+    "Viral fever": ["CBC", "Malaria test", "Dengue NS1"],
+    "Upper respiratory tract infection": ["CBC", "Throat swab if needed"],
+    "Gastritis": ["H. pylori test", "LFT"],
+    "Hypertension": ["ECG", "Kidney function test", "Lipid profile"],
+    "Stable angina": ["ECG", "TMT", "2D Echo"],
+    "Borderline dyslipidemia": ["Lipid profile"],
+    "Allergic dermatitis": ["No specific test", "Allergy panel if needed"],
+    "Acne vulgaris": ["No lab test needed"],
+    "Osteoarthritis knee": ["X-ray knee AP & lateral"],
+    "Lumbar spondylosis": ["X-ray lumbar spine"],
+    "Viral fever – pediatric": ["CBC", "CRP"],
+    "Acute tonsillitis": ["Throat swab", "CBC"],
+    "Bronchiolitis (mild)": ["Chest X-ray if needed"],
+    "Mild asthma": ["Pulmonary function test"],
+    "Type 2 diabetes – uncontrolled": ["Fasting blood sugar", "HbA1c"],
+    "Subclinical hypothyroidism": ["TSH", "Free T3/T4"],
+}
+
+PRESCRIPTION_LINES = [
+    "Tab DOLO 650 mg | 1-1-1 | 5 days",
+    "Tab PANTOP 40 mg | 1-0-0 | 10 days",
+    "Syp Azee 200 mg | 5 ml 1-0-0 | 3 days",
+    "Tab AZITHROMYCIN 500 mg | 1-0-0 | 3 days after food",
+    "Tab CETIRIZINE 10 mg | 0-0-1 | 5 days",
+    "Tab MONTELUKAST+LEVOCET | 0-0-1 | 10 days",
+    "Tab NAPROXEN 250 mg | 1-0-1 | 5 days",
+    "Tab METFORMIN 500 mg | 1-0-1 | 30 days",
+    "Tab TELMISARTAN 40 mg | 1-0-0 | 30 days",
+    "Inj VACCINE (per schedule)",
+]
+
+PRECAUTIONS = [
+    "Drink plenty of water.",
+    "Avoid oily and spicy food.",
+    "Take adequate rest and sleep at least 7–8 hours.",
+    "Check temperature every 6 hours and note it down.",
+    "Avoid cold drinks and ice cream.",
+    "Use mask in crowded places.",
+    "Do regular walking for 30 minutes daily.",
+    "Limit salt intake in food.",
+    "Avoid screens 1 hour before sleeping.",
+    "Practice deep breathing exercises twice daily.",
 ]
 
 VISIT_TYPES = ["IN_PERSON", "ONLINE"]
 
 
-# ----------------------------
-# Helper functions
-# ----------------------------
+# =============================================================
+# CLEAR EXISTING DEMO DATA
+# =============================================================
+def clear_demo_data():
+    print("⚠ Clearing existing demo doctors/patients, appointments, availability, treatments...")
 
-def wipe_non_admin_data():
-    """
-    Dev-only helper: wipe everything except admin users.
-    """
-    print("➡ Wiping existing non-admin data (dev only)...")
-
-    # Delete child tables first due to FK constraints
-    Treatment.query.delete()
-    Appointment.query.delete()
-    Patient.query.delete()
-    Doctor.query.delete()
-
-    # Delete non-admin users
-    User.query.filter(User.role != "admin").delete()
+    # Delete children first to satisfy FK constraints
+    db.session.query(Treatment).delete()
+    db.session.query(Appointment).delete()
+    db.session.query(DoctorAvailability).delete()
+    db.session.query(Patient).delete()
+    db.session.query(Doctor).delete()
+    # Remove all doctor & patient users but leave admin (role='admin') intact
+    db.session.query(User).filter(User.role.in_(["doctor", "patient"])).delete(synchronize_session=False)
 
     db.session.commit()
-    print("✔ Wipe complete.")
+    print("✔ Demo data cleared.")
 
 
-def ensure_admin():
-    """
-    Ensure there is at least one admin user.
-    """
-    admin = User.query.filter_by(role="admin").first()
-    if admin:
-        print(f"✔ Admin already exists: {admin.username}")
-        return admin
-
-    admin = User(
-        username="admin",
-        email="admin@hms.com",
-        role="admin",
-        is_active=True,
-    )
-    admin.set_password("admin123")
-    db.session.add(admin)
-    db.session.commit()
-    print("✔ Created default admin user: admin / admin123")
-    return admin
-
-
-def seed_doctors(count: int = 15):
-    """
-    Seed doctors with deterministic usernames:
-      doctor1, doctor2, ..., doctorN
-      password: doctor123
-    """
-    print(f"➡ Seeding {count} doctors...")
+# =============================================================
+# CREATE DOCTORS & PATIENTS
+# =============================================================
+def ensure_doctors():
     doctors = []
-
-    for i in range(1, count + 1):
-        name = fake.name()
-        specialization = random.choice(SPECIALIZATIONS)
-        experience = random.randint(1, 25)
-        about = f"Specialist in {specialization.lower()} with {experience} years of experience."
-
+    for i in range(1, NUM_DOCTORS + 1):
         username = f"doctor{i}"
-        email = f"doctor{i}@hms.com"
+        full_name = DOCTOR_NAMES[(i - 1) % len(DOCTOR_NAMES)]
+        specialization = SPECIALIZATIONS[(i - 1) % len(SPECIALIZATIONS)]
 
+        email = f"{username}@demo.hms.local"
         user = User(
             username=username,
             email=email,
@@ -141,42 +235,47 @@ def seed_doctors(count: int = 15):
             is_active=True,
         )
         user.set_password("doctor123")
-
         db.session.add(user)
         db.session.flush()  # get user.id
 
-        doc = Doctor(
+        doctor = Doctor(
             id=user.id,
-            full_name=name,
+            full_name=full_name,
             specialization=specialization,
-            experience_years=experience,
-            about=about,
+            experience_years=random.randint(3, 25),
+            about=f"{full_name} is an experienced {specialization.lower()} at Demo HMS.",
         )
-        db.session.add(doc)
-        doctors.append(doc)
+        db.session.add(doctor)
+
+        doctors.append(doctor)
 
     db.session.commit()
-    print(f"✔ Seeded {len(doctors)} doctors.")
     return doctors
 
 
-def seed_patients(count: int = 50):
-    """
-    Seed patients with deterministic usernames:
-      patient1, patient2, ..., patientN
-      password: patient123
-    """
-    print(f"➡ Seeding {count} patients...")
+def random_patient_name():
+    return f"{random.choice(PATIENT_FIRST_NAMES)} {random.choice(PATIENT_LAST_NAMES)}"
+
+
+def random_phone():
+    return "9" + "".join(str(random.randint(0, 9)) for _ in range(9))
+
+
+def random_dob():
+    # age between 5 and 75
+    years_ago = random.randint(5, 75)
+    today = datetime.now(timezone.utc).date()
+    dob_date = today - timedelta(days=365 * years_ago + random.randint(0, 365))
+    return dob_date.strftime("%Y-%m-%d")
+
+
+def ensure_patients():
     patients = []
-
-    for i in range(1, count + 1):
-        full_name = fake.name()
-        gender = random.choice(["Male", "Female", "Other"])
-        dob = fake.date_of_birth(minimum_age=5, maximum_age=80).strftime("%Y-%m-%d")
-
+    for i in range(1, NUM_PATIENTS + 1):
         username = f"patient{i}"
-        email = f"patient{i}@hms.com"
+        full_name = random_patient_name()
 
+        email = f"{username}@demo.hms.local"
         user = User(
             username=username,
             email=email,
@@ -184,205 +283,244 @@ def seed_patients(count: int = 50):
             is_active=True,
         )
         user.set_password("patient123")
-
         db.session.add(user)
         db.session.flush()
 
         patient = Patient(
             id=user.id,
             full_name=full_name,
-            gender=gender,
-            dob=dob,
-            address=fake.address().replace("\n", ", "),
-            phone=fake.msisdn()[:10],
-            height_cm=round(random.uniform(145, 185), 1),
+            gender=random.choice(GENDERS),
+            dob=random_dob(),
+            address="Some Demo Street, Hyderabad",
+            phone=random_phone(),
+            height_cm=round(random.uniform(150, 185), 1),
             weight_kg=round(random.uniform(45, 95), 1),
-            blood_group=random.choice(["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]),
-            is_disabled=random.choice([True, False, None]),
+            blood_group=random.choice(BLOOD_GROUPS),
+            is_disabled=random.choice([True, False, False, False]),  # mostly False
+            # could be a static avatar URL in real app; keeping None is OK
             profile_photo_url=None,
         )
         db.session.add(patient)
+
         patients.append(patient)
 
     db.session.commit()
-    print(f"✔ Seeded {len(patients)} patients.")
     return patients
 
 
-def random_slot_time():
-    """
-    Returns a string "HH:MM" between 09:00 and 17:00 in 30-min intervals.
-    """
-    start = dtime(9, 0)
-    end = dtime(17, 0)
-    slots = []
+# =============================================================
+# AVAILABILITY: generate for each doctor & date window
+# - includes holidays & partial unavailability
+# =============================================================
+def seed_availability(doctors):
+    today = datetime.now(timezone.utc).date()
+    start_date = today - timedelta(days=DAYS_BACK)
+    end_date = today + timedelta(days=DAYS_FORWARD)
 
-    current_dt = datetime.combine(date.today(), start)
-    end_dt = datetime.combine(date.today(), end)
-    while current_dt < end_dt:
-        slots.append(current_dt.time())
-        current_dt += timedelta(minutes=30)
-
-    t = random.choice(slots)
-    return t.strftime("%H:%M")
-
-
-def seed_appointments(doctors, patients, min_count: int = 300):
-    print(f"➡ Seeding at least {min_count} appointments...")
-
-    today = date.today()
-    year = today.year
-    start_date = date(year, 1, 1)
-    end_date = date(year, 12, 31)
-
-    total_days = (end_date - start_date).days + 1
-
-    appts = []
-    used_slots = set()  # (doctor_id, date_str, time_str) to avoid exact duplicates
-
-    while len(appts) < min_count:
-        doctor = random.choice(doctors)
-        patient = random.choice(patients)
-
-        # pick random date in year
-        offset = random.randint(0, total_days - 1)
-        appt_date = start_date + timedelta(days=offset)
-        date_str = appt_date.strftime("%Y-%m-%d")
-
-        time_str = random_slot_time()
-
-        # check double-booking (per doctor, date, time)
-        key = (doctor.id, date_str, time_str)
-        if key in used_slots:
-            continue  # skip, pick another combo
-        used_slots.add(key)
-
-        # status logic: future dates cannot be COMPLETED
-        if appt_date > today:
-            status = random.choices(
-                ["BOOKED", "CANCELLED"],
-                weights=[0.8, 0.2],
-                k=1,
-            )[0]
-        else:
-            status = random.choices(
-                ["BOOKED", "COMPLETED", "CANCELLED"],
-                weights=[0.4, 0.4, 0.2],
-                k=1,
-            )[0]
-
-        reason = random.choice([
-            "Fever and body pain",
-            "Routine health checkup",
-            "Follow-up visit",
-            "Back pain since 2 weeks",
-            "Headache and dizziness",
-            "Diabetes follow-up",
-            "Blood pressure check",
-            "Skin rash and itching",
-            "Cough and cold",
-        ])
-
-        appt = Appointment(
-            patient_id=patient.id,
-            doctor_id=doctor.id,
-            date=date_str,
-            time=time_str,
-            status=status,
-            reason=reason,
-            created_at=datetime.combine(appt_date, dtime(hour=random.randint(8, 20)))
-        )
-
-        db.session.add(appt)
-        appts.append(appt)
-
-    db.session.commit()
-    print(f"✔ Seeded {len(appts)} appointments.")
-    return appts
-
-
-def build_treatment_for_appointment(appt: Appointment) -> Treatment:
-    """
-    Build a Treatment that fits the CURRENT Treatment model:
-
-    columns:
-      - diagnosis
-      - prescription  (we'll store medicines / dosage pattern here)
-      - notes         (we'll store tests/precautions/visit type etc as text)
-      - created_at
-    """
-    diagnosis = random.choice(DIAGNOSES)
-
-    tests_done = ", ".join(random.sample(TESTS_LIST, k=random.randint(1, 3)))
-    medicines = random.choice(MEDICINE_PATTERNS)
-    precautions = random.choice(PRECAUTIONS_LIST)
-    visit_type = random.choice(VISIT_TYPES)
-
-    notes_parts = [
-        f"Tests done: {tests_done}",
-        f"Visit type: {visit_type}",
-        f"Precautions: {precautions}",
+    all_dates = [
+        start_date + timedelta(days=i)
+        for i in range((end_date - start_date).days + 1)
     ]
-    notes_text = " | ".join(notes_parts)
 
-    return Treatment(
-        appointment=appt,        # via relationship, sets appointment_id
-        diagnosis=diagnosis,
-        prescription=medicines,
-        notes=notes_text,
-        # created_at will be adjusted in seed_treatments()
-    )
+    for doctor in doctors:
+        # choose some full-day holidays for this doctor
+        doctor_holidays = set(random.sample(all_dates, k=max(1, len(all_dates) // 10)))
 
+        for d in all_dates:
+            date_str = d.strftime("%Y-%m-%d")
 
-def seed_treatments(appointments):
-    print("➡ Seeding treatments for COMPLETED appointments...")
-    count = 0
+            if d in doctor_holidays:
+                # Holiday: all slots unavailable
+                for slot in TIME_SLOTS:
+                    db.session.add(
+                        DoctorAvailability(
+                            doctor_id=doctor.id,
+                            date=date_str,
+                            time_slot=slot,
+                            is_available=False,
+                        )
+                    )
+                continue
 
-    for appt in appointments:
-        if appt.status != "COMPLETED":
-            continue
-
-        # 1–2 treatments per completed appointment
-        n_treat = random.randint(1, 2)
-        for _ in range(n_treat):
-            t = build_treatment_for_appointment(appt)
-
-            # created_at slightly after appointment date
-            try:
-                appt_date = datetime.fromisoformat(appt.date).date()
-            except Exception:
-                appt_date = date.today()
-
-            t.created_at = datetime.combine(
-                appt_date, dtime(hour=10)
-            ) + timedelta(hours=random.randint(0, 6))
-
-            db.session.add(t)
-            count += 1
+            # working day: create slots, some available, some blocked
+            for slot in TIME_SLOTS:
+                # randomly decide if doctor works this slot
+                is_available = random.random() > 0.2  # 80% of slots available
+                db.session.add(
+                    DoctorAvailability(
+                        doctor_id=doctor.id,
+                        date=date_str,
+                        time_slot=slot,
+                        is_available=is_available,
+                    )
+                )
 
     db.session.commit()
-    print(f"✔ Seeded {count} treatments.")
 
 
-# ----------------------------
-# Main
-# ----------------------------
+# =============================================================
+# APPOINTMENTS + TREATMENTS:
+# - Past days → mostly COMPLETED with Treatment
+# - Today & future → BOOKED / some CANCELLED, mostly without Treatment
+# =============================================================
+def pick_diagnosis_for_doctor(doctor):
+    diag_list = DIAGNOSES_BY_SPEC.get(doctor.specialization, None)
+    if not diag_list:
+        # fallback generic
+        diag_list = ["General checkup", "Follow-up visit"]
+    return random.choice(diag_list)
 
-def main():
-    app = create_app()
-    with app.app_context():
-        print("➡ Creating tables (if not exist)...")
-        db.create_all()
 
-        ensure_admin()
-        wipe_non_admin_data()
+def generate_prescription_text():
+    lines = random.sample(PRESCRIPTION_LINES, k=random.randint(2, 4))
+    return "\n".join(lines)
 
-        doctors = seed_doctors(15)
-        patients = seed_patients(50)
-        appointments = seed_appointments(doctors, patients, min_count=300)
-        seed_treatments(appointments)
+
+def generate_tests_text(diagnosis):
+    tests = TESTS_BY_DIAGNOSIS.get(diagnosis)
+    if not tests:
+        # generic tests
+        tests = random.sample(
+            [
+                "CBC",
+                "LFT",
+                "KFT",
+                "Fasting blood sugar",
+                "HbA1c",
+                "Chest X-ray",
+                "ECG",
+                "Lipid profile",
+                "Thyroid profile",
+            ],
+            k=random.randint(1, 3),
+        )
+    return ", ".join(tests)
+
+
+def seed_appointments_and_treatments(doctors, patients):
+    today = datetime.now(timezone.utc).date()
+    start_date = today - timedelta(days=DAYS_BACK)
+    end_date = today + timedelta(days=DAYS_FORWARD)
+
+    all_dates = [
+        start_date + timedelta(days=i)
+        for i in range((end_date - start_date).days + 1)
+    ]
+
+    for d in all_dates:
+        date_str = d.strftime("%Y-%m-%d")
+        is_past = d < today
+
+        for doctor in doctors:
+            # get availability slots for that doctor & date that are available
+            avail_slots = DoctorAvailability.query.filter_by(
+                doctor_id=doctor.id,
+                date=date_str,
+                is_available=True,
+            ).all()
+
+            for slot_obj in avail_slots:
+                time_slot = slot_obj.time_slot
+
+                # randomly decide if this slot gets booked
+                if random.random() > APPOINTMENT_BOOKING_DENSITY:
+                    continue
+
+                patient = random.choice(patients)
+                reason = random.choice(REASONS)
+
+                # Determine status based on date
+                if is_past:
+                    status = random.choice(["COMPLETED", "COMPLETED", "CANCELLED"])
+                elif d == today:
+                    status = random.choice(["BOOKED", "BOOKED", "CANCELLED"])
+                else:
+                    status = "BOOKED"
+
+                created_at = datetime.now(timezone.utc) - timedelta(
+                    days=random.randint(0, DAYS_BACK + 5)
+                )
+
+                appt = Appointment(
+                    patient_id=patient.id,
+                    doctor_id=doctor.id,
+                    date=date_str,
+                    time=time_slot,
+                    status=status,
+                    reason=reason,
+                    created_at=created_at,
+                )
+                db.session.add(appt)
+                db.session.flush()  # to get appt.id
+
+                # If appointment completed, add FULL Treatment
+                if status == "COMPLETED":
+                    diagnosis = pick_diagnosis_for_doctor(doctor)
+                    prescription = generate_prescription_text()
+                    tests_text = generate_tests_text(diagnosis)
+                    precautions = " ".join(random.sample(PRECAUTIONS, k=2))
+
+                    # Follow up after 7–30 days
+                    follow_up_date = d + timedelta(days=random.randint(7, 30))
+                    follow_up_str = follow_up_date.strftime("%Y-%m-%d")
+
+                    # structured medicines_json – always filled
+                    medicines_structured = [
+                        {
+                            "name": "DOLO 650",
+                            "dose_pattern": "1-1-1",
+                            "duration_days": 5,
+                            "instruction": "After food",
+                        },
+                        {
+                            "name": "PANTOP 40",
+                            "dose_pattern": "1-0-0",
+                            "duration_days": 10,
+                            "instruction": "Before breakfast",
+                        },
+                    ]
+
+                    treatment = Treatment(
+                        appointment_id=appt.id,
+                        diagnosis=diagnosis,
+                        prescription=prescription,
+                        notes="Patient advised as per prescription. Review if symptoms worsen.",
+                        created_at=created_at + timedelta(hours=1),
+                        visit_type=random.choice(VISIT_TYPES),
+                        tests_text=tests_text,
+                        precautions=precautions,
+                        follow_up_date=follow_up_str,
+                        medicines_json=json.dumps(medicines_structured),
+                    )
+                    db.session.add(treatment)
+
+    db.session.commit()
+
+
+# =============================================================
+# MAIN ENTRY
+# =============================================================
+def seed_demo_data():
+    print("➡ Seeding demo HMS data (doctors, patients, availability, appointments, treatments)...")
+
+    clear_demo_data()
+
+    doctors = ensure_doctors()
+    print(f"✔ Created {len(doctors)} doctors (doctor1..doctor{len(doctors)})")
+
+    patients = ensure_patients()
+    print(f"✔ Created {len(patients)} patients (patient1..patient{len(patients)})")
+
+    seed_availability(doctors)
+    print("✔ Seeded doctor availability with realistic working days & holidays")
+
+    seed_appointments_and_treatments(doctors, patients)
+    print("✔ Seeded appointments & treatments across the last and upcoming days")
+
+    print("✅ Demo data seeding complete!")
 
 
 if __name__ == "__main__":
-    main()
-    print(">> Done seeding.")
+    app = create_app()
+    with app.app_context():
+        seed_demo_data()

@@ -1,5 +1,4 @@
 from flask import Flask, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_caching import Cache
@@ -13,7 +12,8 @@ from routes.admin_routes import *
 from routes.doctor_routes import *
 from routes.patient_routes import *
 
-cache = Cache()  # proper cache instance
+# Global cache instance used by cache_utils.cached / cache_delete_pattern
+cache = Cache()
 
 
 def create_app():
@@ -25,15 +25,21 @@ def create_app():
     # -----------------------------
     db.init_app(app)
     JWTManager(app)
-    cache.init_app(app)
+    cache.init_app(app)  # backed by Redis as per Config
 
     # -----------------------------
-    # CORS (Vue @ localhost:5173)
+    # CORS (Vue dev @ :5173)
     # -----------------------------
     CORS(
         app,
-        resources={r"/api/*": {"origins": "http://localhost:5173"}},
-        supports_credentials=True,
+        resources={
+            r"/api/*": {
+                "origins": [
+                    "http://localhost:5173",
+                    "http://127.0.0.1:5173",
+                ]
+            }
+        },
     )
 
     # =============================
@@ -50,7 +56,9 @@ def create_app():
     # Dashboard stats
     app.add_url_rule("/api/admin/stats", view_func=admin_stats, methods=["GET"])
 
+    # -----------------------------
     # Doctor management (admin side)
+    # -----------------------------
     app.add_url_rule("/api/admin/doctors", view_func=create_doctor, methods=["POST"])
     app.add_url_rule("/api/admin/doctors", view_func=list_doctors, methods=["GET"])
     app.add_url_rule(
@@ -69,8 +77,19 @@ def create_app():
         methods=["DELETE"],
     )
 
+    # -----------------------------
     # Patient management (admin side)
-    app.add_url_rule("/api/admin/patients", view_func=list_patients, methods=["GET"])
+    # -----------------------------
+    app.add_url_rule(
+        "/api/admin/patients",
+        view_func=list_patients,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/api/admin/patients",
+        view_func=create_patient,
+        methods=["POST"],
+    )
     app.add_url_rule(
         "/api/admin/patients/<int:patient_id>",
         view_func=get_patient,
@@ -87,7 +106,9 @@ def create_app():
         methods=["DELETE"],
     )
 
+    # -----------------------------
     # Appointments (admin side)
+    # -----------------------------
     app.add_url_rule(
         "/api/admin/appointments",
         view_func=admin_appointments,
@@ -113,35 +134,56 @@ def create_app():
     # List / filter doctor’s own appointments
     app.add_url_rule(
         "/api/doctor/appointments",
-        view_func=doctor_appointments,
+        view_func=doctor_list_appointments,
         methods=["GET"],
     )
 
     # Update status of a specific appointment (BOOKED → COMPLETED / CANCELLED)
     app.add_url_rule(
-        "/api/doctor/appointments/<int:appt_id>/status",
+        "/api/doctor/appointments/<int:appointment_id>/status",
         view_func=doctor_update_appointment_status,
         methods=["POST"],
     )
 
     # Save / update treatment details for an appointment
     app.add_url_rule(
-        "/api/doctor/appointments/<int:appt_id>/treatment",
+        "/api/doctor/appointments/<int:appointment_id>/treatment",
         view_func=doctor_save_treatment,
+        methods=["POST"],
+    )
+
+    # Get treatment details for an appointment (auto-fill on doctor side)
+    app.add_url_rule(
+        "/api/doctor/appointments/<int:appointment_id>/treatment",
+        view_func=doctor_get_treatment,
+        methods=["GET"],
+    )
+
+    # Doctor availability view (7-day grid)
+    app.add_url_rule(
+        "/api/doctor/availability",
+        view_func=doctor_availability,
+        methods=["GET"],
+    )
+
+    # Toggle a single slot (click on cell)
+    app.add_url_rule(
+        "/api/doctor/availability/toggle",
+        view_func=doctor_toggle_availability,
+        methods=["POST"],
+    )
+
+    # Bulk update a day's slots (full day off)
+    app.add_url_rule(
+        "/api/doctor/availability/bulk",
+        view_func=doctor_update_availability,
         methods=["POST"],
     )
 
     # Fetch full history of a particular patient (for this doctor)
     app.add_url_rule(
-        "/api/doctor/patient-history/<int:patient_id>",
+        "/api/doctor/patient-history",
         view_func=doctor_patient_history,
-        methods=["GET"],
-    )
-
-    # Doctor availability view (read-only – what slots are already blocked)
-    app.add_url_rule(
-        "/api/doctor/availability",
-        view_func=doctor_availability,
         methods=["GET"],
     )
 
@@ -206,12 +248,65 @@ def create_app():
         methods=["GET"],
     )
 
+    # ✅ Direct CSV export (sync)
+    app.add_url_rule(
+        "/api/patient/history/export-csv",
+        view_func=patient_history_export_csv,
+        methods=["GET"],
+    )
+
+    # ==========================================
+    # PATIENT EXPORT HISTORY (CSV via Celery)
+    # ==========================================
+    app.add_url_rule(
+        "/api/patient/export-history",
+        view_func=patient_export_history,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/api/patient/export-history/status/<task_id>",
+        view_func=patient_export_history_status,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/api/patient/export-history/download/<task_id>",
+        view_func=patient_export_history_download,
+        methods=["GET"],
+    )
+
     # =============================
-    # ROOT
+    # HEALTH / ROOT
     # =============================
     @app.route("/")
     def home():
         return jsonify({"message": "HMS Backend Running", "status": "OK"})
+
+    @app.route("/api/health")
+    def health():
+        """
+        Simple health check for DB + cache (Redis).
+        Perfect to show in viva and for quick infra debugging.
+        """
+        try:
+            db.session.execute("SELECT 1")
+            db_ok = True
+        except Exception:
+            db_ok = False
+
+        cache_ok = True
+        try:
+            # backend-specific; for RedisCache this will touch Redis
+            cache.set("healthcheck", "ok", timeout=5)
+            if cache.get("healthcheck") != "ok":
+                cache_ok = False
+        except Exception:
+            cache_ok = False
+
+        return jsonify({
+            "status": "OK" if (db_ok and cache_ok) else "DEGRADED",
+            "db": db_ok,
+            "cache": cache_ok,
+        }), 200 if (db_ok and cache_ok) else 503
 
     return app
 

@@ -7,6 +7,7 @@ from flask_jwt_extended import (
     get_jwt
 )
 from datetime import timedelta
+from sqlalchemy import or_
 
 
 # ----------------------
@@ -16,19 +17,19 @@ from datetime import timedelta
 def register_user():
     data = request.get_json() or {}
 
-    username = data.get("username", "").strip()
-    email = data.get("email", "").strip()
-    password = data.get("password", "")
-    full_name = data.get("full_name", "").strip()
-    phone = data.get("phone", "").strip()
-    address = data.get("address", "").strip()
+    username = (data.get("username") or "").strip()
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    full_name = (data.get("full_name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    address = (data.get("address") or "").strip()
 
     if not username or not email or not password or not full_name:
         return jsonify({"message": "Missing required fields"}), 400
 
-    # Check if username or email already exists
+    # Check if username or email already exists (optimised with or_)
     existing_user = User.query.filter(
-        (User.username == username) | (User.email == email)
+        or_(User.username == username, User.email == email)
     ).first()
 
     if existing_user:
@@ -39,21 +40,22 @@ def register_user():
         username=username,
         email=email,
         role="patient",
-        is_active=True
+        is_active=True,
     )
     user.set_password(password)
-
     db.session.add(user)
-    db.session.commit()
+    db.session.flush()  # get user.id without extra commit
 
     # Add Patient profile
     patient = Patient(
         id=user.id,
         full_name=full_name,
-        phone=phone,
-        address=address
+        phone=phone or None,
+        address=address or None,
     )
     db.session.add(patient)
+
+    # Single commit for both user + patient
     db.session.commit()
 
     return jsonify({"message": "Patient registered successfully"}), 201
@@ -65,12 +67,13 @@ def register_user():
 # ----------------------
 def login_user():
     data = request.get_json() or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
 
     if not username or not password:
         return jsonify({"message": "Username and password required"}), 400
 
+    # Single query by username
     user = User.query.filter_by(username=username).first()
 
     if not user or not user.check_password(password):
@@ -79,19 +82,17 @@ def login_user():
     if not user.is_active:
         return jsonify({"message": "User is deactivated"}), 403
 
-    # ✅ identity must be a simple type (string/int)
-    # additional_claims can contain role or more metadata
     access_token = create_access_token(
-        identity=str(user.id),              # MUST be string or int!
+        identity=str(user.id),              # MUST be string or int
         additional_claims={"role": user.role},
-        expires_delta=timedelta(hours=8)
+        expires_delta=timedelta(hours=8),
     )
 
     return jsonify({
         "access_token": access_token,
         "id": user.id,
         "role": user.role,
-        "username": user.username
+        "username": user.username,
     }), 200
 
 
@@ -112,6 +113,6 @@ def get_current_user():
         "id": user.id,
         "username": user.username,
         "email": user.email,
-        "role": claims.get("role"),   # safe and consistent
-        "is_active": user.is_active
+        "role": claims.get("role"),
+        "is_active": user.is_active,
     })

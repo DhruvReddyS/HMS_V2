@@ -21,10 +21,16 @@ class User(db.Model):
 
     # 1–1 profiles
     patient_profile = db.relationship(
-        "Patient", backref="user", uselist=False, cascade="all, delete-orphan"
+        "Patient",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
     doctor_profile = db.relationship(
-        "Doctor", backref="user", uselist=False, cascade="all, delete-orphan"
+        "Doctor",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
     # password helpers
@@ -60,6 +66,14 @@ class Patient(db.Model):
     blood_group = db.Column(db.String(10))      # e.g. "O+", "B-"
     is_disabled = db.Column(db.Boolean)         # physically challenged Y/N
     profile_photo_url = db.Column(db.String(255))
+
+    # relationships
+    user = db.relationship("User", back_populates="patient_profile")
+    appointments = db.relationship(
+        "Appointment",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+    )
 
     def to_profile_dict(self):
         """
@@ -97,6 +111,19 @@ class Doctor(db.Model):
     experience_years = db.Column(db.Integer)
     about = db.Column(db.String(255))
 
+    # relationships
+    user = db.relationship("User", back_populates="doctor_profile")
+    appointments = db.relationship(
+        "Appointment",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
+    )
+    availability_slots = db.relationship(
+        "DoctorAvailability",
+        back_populates="doctor",
+        cascade="all, delete-orphan",
+    )
+
     def to_basic_dict(self):
         """
         Shape used by patient-side doctor dropdown / lists.
@@ -126,16 +153,31 @@ class Appointment(db.Model):
     doctor_id = db.Column(db.Integer, db.ForeignKey("doctors.id"), nullable=False)
 
     # Keep as strings for simplicity
-    date = db.Column(db.String(20))             # "YYYY-MM-DD"
-    time = db.Column(db.String(20))             # "10:30" or "10:30 AM"
+    date = db.Column(db.String(20), nullable=False)   # "YYYY-MM-DD"
+    time = db.Column(db.String(20), nullable=False)   # "10:30" or "10:30 AM"
 
     status = db.Column(db.String(20), default="BOOKED")  # BOOKED / COMPLETED / CANCELLED
-    reason = db.Column(db.String(255))          # reason for visit (optional)
+    reason = db.Column(db.String(255))                  # reason for visit (optional)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # ORM relationships
-    patient = db.relationship("Patient", backref="appointments")
-    doctor = db.relationship("Doctor", backref="appointments")
+    patient = db.relationship("Patient", back_populates="appointments")
+    doctor = db.relationship("Doctor", back_populates="appointments")
+    treatments = db.relationship(
+        "Treatment",
+        back_populates="appointment",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        # Optional: database-level guard so same doctor/date/time cannot be double-booked
+        db.UniqueConstraint(
+            "doctor_id",
+            "date",
+            "time",
+            name="uq_doctor_date_time",
+        ),
+    )
 
     def to_patient_dict(self):
         """
@@ -162,7 +204,10 @@ class Appointment(db.Model):
         }
 
     def __repr__(self):
-        return f"<Appointment id={self.id} patient_id={self.patient_id} doctor_id={self.doctor_id}>"
+        return (
+            f"<Appointment id={self.id} "
+            f"patient_id={self.patient_id} doctor_id={self.doctor_id}>"
+        )
 
 
 # ------------------------------------------------------
@@ -176,54 +221,103 @@ class Treatment(db.Model):
 
     # Core info
     diagnosis = db.Column(db.String(255))
-    prescription = db.Column(db.String(255))  # high-level summary
+    # raw medicines text like:
+    # "DOLO 650 | 1-1-1 | 5 days\nPANTOP 40 | 1-0-1 | 7 days"
+    prescription = db.Column(db.String(255))
     notes = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Extended visit details
-    visit_type = db.Column(db.String(20))          # "in_person" / "online" etc.
-    tests_text = db.Column(db.String(255))         # comma-separated tests or free text
-    precautions = db.Column(db.String(255))        # precautions / lifestyle advice
-    follow_up_date = db.Column(db.String(20))      # "YYYY-MM-DD" as string (optional)
+    visit_type = db.Column(db.String(20))          # "IN_PERSON" / "ONLINE"
+    tests_text = db.Column(db.String(255))         # free text, we parse into list in to_dict
+    precautions = db.Column(db.String(255))        # lifestyle advice
+    follow_up_date = db.Column(db.String(20))      # "YYYY-MM-DD" string
 
-    # Structured medicines stored as JSON text:
-    # [
-    #   {"name": "Tab A", "pattern": "1-0-1", "pattern_help": "Morning & night", "days": 5},
-    #   {"name": "Syrup B", "pattern": "0-1-1", "pattern_help": "After lunch & dinner", "days": 3}
-    # ]
+    # Optional legacy / future structured format (not used by new UI)
     medicines_json = db.Column(db.Text)
 
-    appointment = db.relationship("Appointment", backref="treatments")
+    appointment = db.relationship("Appointment", back_populates="treatments")
 
     def to_dict(self):
         """
-        Shape returned by /api/patient/history for a single treatment record.
+        Shape returned by /patient/history for a single treatment record.
+        Compatible with:
+        - PatientVisitHistory.vue (uses prescription + tests_text + meta)
+        - Older/legacy code (medicines_json if present)
         """
-        # parse medicines JSON
-        medicines = None
-        if self.medicines_json:
-            try:
-                medicines = json.loads(self.medicines_json)
-            except Exception:
-                medicines = None
-
-        # convert tests_text into list
+        # ---- tests_text → tests list ----
         tests = None
         if self.tests_text:
-            tests = [t.strip() for t in self.tests_text.split(",") if t.strip()]
+            # support both comma & newline separated
+            tests = [
+                t.strip()
+                for t in self.tests_text.replace("\r", "").replace("\n", ",").split(",")
+                if t.strip()
+            ]
+
+        # ---- legacy structured medicines (if you ever used medicines_json) ----
+        medicines_structured = None
+        if self.medicines_json:
+            try:
+                medicines_structured = json.loads(self.medicines_json)
+            except Exception:
+                medicines_structured = None
 
         return {
             "id": self.id,
             "diagnosis": self.diagnosis,
+            # raw text used by patient history to render patterns
             "prescription": self.prescription,
             "notes": self.notes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+
+            # visit meta
             "visit_type": self.visit_type,
-            "tests": tests,               # list[str] or None
-            "medicines": medicines,       # list[dict] or None
+            "tests": tests,                 # list[str] for chips
+            "tests_text": self.tests_text,  # raw text for summary line
             "precautions": self.precautions,
             "follow_up_date": self.follow_up_date,
+
+            # legacy / optional structured field
+            "medicines": medicines_structured,
         }
 
     def __repr__(self):
         return f"<Treatment id={self.id} appointment_id={self.appointment_id}>"
+
+
+# ------------------------------------------------------
+# DOCTOR AVAILABILITY (per doctor, per date, per slot)
+# ------------------------------------------------------
+class DoctorAvailability(db.Model):
+    __tablename__ = "doctor_availability"
+
+    id = db.Column(db.Integer, primary_key=True)
+    doctor_id = db.Column(db.Integer, db.ForeignKey("doctors.id"), nullable=False)
+
+    # Specific date this availability applies to
+    date = db.Column(db.String(20), nullable=False)      # "YYYY-MM-DD"
+
+    # Slot time; must match whatever you use in DEFAULT_TIME_SLOTS
+    time_slot = db.Column(db.String(10), nullable=False)  # "09:00", "09:30", ...
+
+    # If False → doctor is not working in this specific slot on this date
+    is_available = db.Column(db.Boolean, default=True)
+
+    doctor = db.relationship("Doctor", back_populates="availability_slots")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "doctor_id",
+            "date",
+            "time_slot",
+            name="uq_doctor_date_slot",
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<DoctorAvailability doctor_id={self.doctor_id} "
+            f"date={self.date} time_slot={self.time_slot} "
+            f"available={self.is_available}>"
+        )

@@ -1,101 +1,213 @@
 <template>
   <div class="doctor-dashboard container py-4">
+    <!-- ============ TOP TOOLBAR ============ -->
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2 top-toolbar">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="pill-badge">
+          <span class="pill-dot"></span>
+          Online • Doctor Panel
+        </span>
+        <span class="small text-muted">
+          Last refresh:
+          <strong>{{ lastRefreshedLabel }}</strong>
+        </span>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2">
+        <button
+          class="btn btn-light btn-sm rounded-pill toolbar-btn"
+          type="button"
+          @click="goToAllAppointments"
+        >
+          <i class="bi bi-list-check me-1"></i>
+          All appointments
+        </button>
+        <button
+          class="btn btn-light btn-sm rounded-pill toolbar-btn"
+          type="button"
+          @click="goToAvailability"
+        >
+          <i class="bi bi-clock-history me-1"></i>
+          Availability grid
+        </button>
+        <button
+          class="btn btn-primary btn-sm rounded-pill toolbar-btn"
+          type="button"
+          @click="loadDashboard"
+          :disabled="loading"
+        >
+          <span
+            v-if="loading"
+            class="spinner-border spinner-border-sm me-1"
+          ></span>
+          <i v-else class="bi bi-arrow-clockwise me-1"></i>
+          Refresh
+        </button>
+      </div>
+    </div>
+
     <!-- ============ HEADER / BANNER ============ -->
-    <div class="banner card border-0 shadow-sm mb-4">
+    <div class="banner card border-0 shadow-soft mb-4">
       <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
-        <div class="d-flex align-items-center gap-3">
-          <div class="page-icon">
-            <i class="bi bi-stethoscope"></i>
+        <!-- Left: Doctor intro -->
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <div class="page-avatar">
+            <i class="bi bi-person-badge"></i>
           </div>
           <div>
-            <h2 class="page-title mb-1">
-              Welcome, Dr. {{ doctor?.full_name || 'Doctor' }}
-            </h2>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <h2 class="page-title mb-0">
+                Dr. {{ doctor?.full_name || 'Doctor' }}
+              </h2>
+              <span
+                v-if="doctor?.specialization"
+                class="chip chip-soft"
+              >
+                {{ doctor.specialization }}
+              </span>
+            </div>
             <p class="page-subtitle mb-1">
-              {{ doctor?.specialization || 'Consultant' }}
+              {{ todayHuman }}
             </p>
             <p class="small text-muted mb-0">
-              Today is
-              <strong>{{ prettyDate(summary?.today || todayStr) }}</strong>.
-              Manage your appointments, update visit history and review patients from one place.
+              Today’s overview of your queue, completed visits and recent patients.
             </p>
           </div>
         </div>
 
-        <div class="text-end small text-muted">
-          <div class="badge-pill-text">
+        <!-- Right: next appointment / status -->
+        <div class="header-right text-end small text-muted">
+          <div class="badge-pill-text mb-2">
             <span class="dot dot-online"></span>
-            You are logged in as <strong>Doctor</strong>
+            Signed in as
+            <strong>Doctor</strong>
           </div>
-          <div>Last updated just now</div>
+
+          <div
+            v-if="nextAppointment"
+            class="next-appt-pill d-inline-flex align-items-center gap-2"
+          >
+            <div class="next-appt-icon">
+              <i class="bi bi-person-video3"></i>
+            </div>
+            <div class="next-appt-content text-start">
+              <div class="next-appt-label">Next patient</div>
+              <div class="fw-semibold">
+                {{ nextAppointment.patient_name || 'Patient' }}
+              </div>
+              <div class="small text-muted">
+                {{ nextAppointment.time_slot || '—' }}
+                &nbsp;•&nbsp;
+                {{ prettyDate(nextAppointment.appointment_date) }}
+              </div>
+            </div>
+          </div>
+          <div v-else class="small text-muted fst-italic mt-1">
+            No upcoming appointments queued for today.
+          </div>
         </div>
       </div>
     </div>
 
     <!-- ============ ERROR ============ -->
-    <div v-if="errorMessage" class="alert alert-danger py-2 small mb-3">
-      {{ errorMessage }}
-    </div>
+    <transition name="fade">
+      <div v-if="errorMessage" class="alert alert-danger py-2 small mb-3">
+        {{ errorMessage }}
+      </div>
+    </transition>
 
     <!-- ============ TOP STATS CARDS ============ -->
     <div class="row g-3 mb-3">
-      <div class="col-md-3 col-sm-6">
+      <div class="col-md-3 col-6">
         <div class="stat-card stat-primary">
-          <div class="stat-label">Today’s Appointments</div>
+          <div class="stat-header d-flex justify-content-between align-items-center">
+            <div>
+              <div class="stat-label">Today</div>
+              <div class="stat-sub">Appointments</div>
+            </div>
+            <span class="stat-icon-wrap">
+              <i class="bi bi-calendar2-week stat-icon"></i>
+            </span>
+          </div>
           <div class="stat-value">
             {{ summary?.stats?.today_total ?? '–' }}
           </div>
           <div class="stat-hint">
-            Booked:
-            <strong>{{ summary?.stats?.today_booked ?? 0 }}</strong> &nbsp;•&nbsp;
-            Completed:
+            B:
+            <strong>{{ summary?.stats?.today_booked ?? 0 }}</strong>
+            &nbsp;•&nbsp;
+            C:
             <strong>{{ summary?.stats?.today_completed ?? 0 }}</strong>
           </div>
         </div>
       </div>
 
-      <div class="col-md-3 col-sm-6">
+      <div class="col-md-3 col-6">
         <div class="stat-card stat-amber">
-          <div class="stat-label">Pending Visits</div>
+          <div class="stat-header d-flex justify-content-between align-items-center">
+            <div>
+              <div class="stat-label">Pending</div>
+              <div class="stat-sub">Visits</div>
+            </div>
+            <span class="stat-icon-wrap">
+              <i class="bi bi-hourglass-split stat-icon"></i>
+            </span>
+          </div>
           <div class="stat-value">
             {{ summary?.stats?.pending_visits ?? '–' }}
           </div>
           <div class="stat-hint">
-            Visits that are still in <strong>BOOKED</strong> status.
+            Still in <strong>BOOKED</strong>.
           </div>
         </div>
       </div>
 
-      <div class="col-md-3 col-sm-6">
+      <div class="col-md-3 col-6">
         <div class="stat-card stat-green">
-          <div class="stat-label">Completed this week</div>
+          <div class="stat-header d-flex justify-content-between align-items-center">
+            <div>
+              <div class="stat-label">This week</div>
+              <div class="stat-sub">Completed</div>
+            </div>
+            <span class="stat-icon-wrap">
+              <i class="bi bi-check2-circle stat-icon"></i>
+            </span>
+          </div>
           <div class="stat-value">
             {{ summary?.stats?.week_completed ?? '–' }}
           </div>
           <div class="stat-hint">
-            Good job! Keep your history updated regularly.
+            Completed consults.
           </div>
         </div>
       </div>
 
-      <div class="col-md-3 col-sm-6">
+      <div class="col-md-3 col-6">
         <div class="stat-card stat-sky d-flex flex-column justify-content-between">
           <div>
-            <div class="stat-label">Assigned Patients</div>
+            <div class="stat-header d-flex justify-content-between align-items-center">
+              <div>
+                <div class="stat-label">Assigned</div>
+                <div class="stat-sub">Patients</div>
+              </div>
+              <span class="stat-icon-wrap">
+                <i class="bi bi-people stat-icon"></i>
+              </span>
+            </div>
             <div class="stat-value">
               {{ summary?.stats?.assigned_patients ?? '–' }}
             </div>
             <div class="stat-hint">
-              Patients who have consulted you recently.
+              Recently seen by you.
             </div>
           </div>
-          <div class="text-end">
+          <div class="text-end mt-1">
             <button
-              class="btn btn-outline-primary btn-xs rounded-pill mt-1"
+              class="btn btn-outline-primary btn-xs rounded-pill"
               type="button"
               @click="goToAllAppointments"
             >
-              View all appointments
+              View all
             </button>
           </div>
         </div>
@@ -104,63 +216,61 @@
 
     <!-- ============ MAIN TWO-COLUMN LAYOUT ============ -->
     <div class="row g-3">
-      <!-- LEFT: UPCOMING APPOINTMENTS -->
+      <!-- LEFT: TODAY QUEUE -->
       <div class="col-lg-8">
-        <div class="card border-0 shadow-sm h-100">
+        <div class="card border-0 shadow-soft h-100">
           <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
               <div>
-                <h6 class="section-title mb-0">Today’s Upcoming Appointments</h6>
+                <h6 class="section-title mb-1">Today’s queue</h6>
                 <p class="small text-muted mb-0">
-                  Manage status and jump directly to update patient visit details.
+                  Complete, cancel or update visit sheet in one place.
                 </p>
               </div>
-              <div class="d-flex align-items-center gap-2">
-                <select
-                  v-model="statusFilter"
-                  class="form-select form-select-sm w-auto"
-                >
-                  <option value="all">All</option>
-                  <option value="BOOKED">Booked</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="CANCELLED">Cancelled</option>
-                </select>
-                <button
-                  class="btn btn-outline-secondary btn-sm"
-                  type="button"
-                  @click="loadDashboard"
-                  :disabled="loading"
-                >
-                  <span
-                    v-if="loading"
-                    class="spinner-border spinner-border-sm me-1"
-                  ></span>
-                  Refresh
-                </button>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <div class="d-flex align-items-center small text-muted">
+                  <span class="me-1 fw-semibold">Status:</span>
+                  <select
+                    v-model="statusFilter"
+                    class="form-select form-select-sm w-auto"
+                  >
+                    <option value="all">All</option>
+                    <option value="BOOKED">Booked</option>
+                    <option value="COMPLETED">Completed</option>
+                    <option value="CANCELLED">Cancelled</option>
+                  </select>
+                </div>
               </div>
             </div>
 
+            <!-- Loading -->
             <div v-if="loading" class="text-center py-4 small text-muted">
-              <div class="spinner-border spinner-border-sm me-2"></div>
-              Loading dashboard...
+              <div class="spinner-border spinner-border-sm mb-2"></div>
+              Loading your schedule…
             </div>
 
+            <!-- Empty -->
             <div
               v-else-if="filteredAppointments.length === 0"
-              class="small text-muted text-center py-3"
+              class="empty-state small text-muted text-center py-4"
             >
-              No appointments for today with this filter.
+              <div class="empty-icon mb-2">
+                <i class="bi bi-clipboard2-check"></i>
+              </div>
+              <div class="fw-semibold mb-1">No appointments for this filter.</div>
+              <div>Try a different status or change date from Appointments page.</div>
             </div>
 
+            <!-- Table -->
             <div v-else class="table-responsive">
-              <table class="table table-sm align-middle mb-0">
-                <thead class="table-light small">
+              <table class="table table-sm align-middle mb-0 appointments-table">
+                <thead class="table-head small">
                   <tr>
                     <th>Time</th>
                     <th>Patient</th>
                     <th>Reason</th>
                     <th>Status</th>
-                    <th style="width: 210px;">Actions</th>
+                    <th style="width: 260px;">Actions</th>
                   </tr>
                 </thead>
                 <tbody class="small">
@@ -178,7 +288,7 @@
                         {{ appt.patient_name || 'Patient' }}
                       </div>
                       <div class="text-muted">
-                        #{{ appt.patient_id }}
+                        ID: #{{ appt.patient_id }}
                       </div>
                     </td>
                     <td class="text-muted">
@@ -186,18 +296,20 @@
                     </td>
                     <td>
                       <span
-                        class="badge rounded-pill"
+                        class="badge rounded-pill status-pill"
                         :class="statusBadgeClass(appt.status)"
                       >
-                        {{ (appt.status || '').toUpperCase() }}
+                        {{ statusUpper(appt) || 'UNKNOWN' }}
                       </span>
                     </td>
                     <td>
                       <div class="d-flex flex-wrap gap-1">
+                        <!-- Complete: only when BOOKED -->
                         <button
+                          v-if="canComplete(appt)"
                           class="btn btn-outline-success btn-xs"
                           type="button"
-                          @click="updateStatus(appt, 'COMPLETED')"
+                          @click="askStatusChange(appt, 'COMPLETED')"
                           :disabled="statusLoadingId === appt.id"
                         >
                           <span
@@ -206,10 +318,13 @@
                           ></span>
                           Complete
                         </button>
+
+                        <!-- Cancel: only when BOOKED -->
                         <button
+                          v-if="canCancel(appt)"
                           class="btn btn-outline-danger btn-xs"
                           type="button"
-                          @click="updateStatus(appt, 'CANCELLED')"
+                          @click="askStatusChange(appt, 'CANCELLED')"
                           :disabled="statusLoadingId === appt.id"
                         >
                           <span
@@ -218,13 +333,18 @@
                           ></span>
                           Cancel
                         </button>
+
+                        <!-- Update visit: allowed if not CANCELLED -->
                         <button
+                          v-if="canUpdateVisit(appt)"
                           class="btn btn-outline-primary btn-xs"
                           type="button"
                           @click="openTreatment(appt)"
                         >
-                          Update visit
+                          {{ appt.has_treatment ? 'Edit visit sheet' : 'Add visit details' }}
                         </button>
+
+                        <!-- History: always allowed -->
                         <button
                           class="btn btn-outline-secondary btn-xs"
                           type="button"
@@ -240,8 +360,7 @@
             </div>
 
             <p class="small text-muted mt-2 mb-0">
-              Tip: Always mark visits as <strong>COMPLETED</strong> once you finish
-              consultation and save treatment details.
+              Tip: update the visit sheet and mark as <strong>COMPLETED</strong> soon after each consult.
             </p>
           </div>
         </div>
@@ -250,17 +369,17 @@
       <!-- RIGHT: ASSIGNED PATIENTS + AVAILABILITY CTA -->
       <div class="col-lg-4">
         <!-- Assigned patients -->
-        <div class="card border-0 shadow-sm mb-3">
+        <div class="card border-0 shadow-soft mb-3">
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <h6 class="section-title mb-0">Assigned / Recent Patients</h6>
+              <h6 class="section-title mb-0">Recent patients</h6>
               <small class="text-muted">
                 {{ assignedPatients.length }} patient(s)
               </small>
             </div>
 
             <div v-if="assignedPatients.length === 0" class="small text-muted">
-              Patients will appear here once you start seeing appointments.
+              Patients you see will appear here automatically.
             </div>
 
             <ul v-else class="list-unstyled mb-0 small patient-list">
@@ -286,7 +405,7 @@
                     type="button"
                     @click="goToPatientHistory(p.patient_id)"
                   >
-                    View history
+                    History
                   </button>
                 </div>
               </li>
@@ -295,26 +414,26 @@
         </div>
 
         <!-- Availability CTA -->
-        <div class="card border-0 shadow-sm">
+        <div class="card border-0 shadow-soft">
           <div class="card-body">
-            <h6 class="section-title mb-1">Doctor’s Availability</h6>
+            <h6 class="section-title mb-1">Availability</h6>
             <p class="small text-muted mb-2">
-              View how your slots look for the upcoming 7 days – which timings are
-              already booked and which are still free.
+              7-day grid of your slots to help plan follow-ups.
             </p>
             <button
               class="btn btn-outline-success btn-sm rounded-pill"
               type="button"
               @click="goToAvailability"
             >
-              View availability grid
+              <i class="bi bi-calendar-range me-1"></i>
+              View availability
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ============ TREATMENT MODAL (Update Visit) ============ -->
+    <!-- ============ TREATMENT MODAL (Add / Edit Visit) ============ -->
     <div
       v-if="showTreatmentModal && activeAppointment"
       class="modal-backdrop-custom"
@@ -322,10 +441,13 @@
       <div class="modal-card">
         <div class="modal-header d-flex justify-content-between align-items-center">
           <div>
-            <h5 class="mb-0">Update Visit Details</h5>
+            <h5 class="mb-0">
+              {{ hasExistingTreatment ? 'Edit visit sheet' : 'Add visit details' }}
+            </h5>
             <p class="small text-muted mb-0">
               Patient:
-              <strong>{{ activeAppointment.patient_name }}</strong> &nbsp;•&nbsp;
+              <strong>{{ activeAppointment.patient_name }}</strong>
+              &nbsp;•&nbsp;
               {{ prettyDate(activeAppointment.appointment_date) }}
               at
               {{ activeAppointment.time_slot }}
@@ -342,27 +464,30 @@
         <div class="modal-body small">
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label small fw-semibold">Visit Type</label>
+              <label class="form-label small fw-semibold">Visit type</label>
               <select
                 v-model="treatmentForm.visit_type"
                 class="form-select form-select-sm"
               >
                 <option value="">Select</option>
-                <option value="IN_PERSON">In person (clinic)</option>
+                <option value="IN_PERSON">In-person (clinic)</option>
                 <option value="ONLINE">Online / teleconsultation</option>
               </select>
             </div>
 
             <div class="col-md-4">
-              <label class="form-label small fw-semibold">Tests done / advised</label>
-              <input
-                type="text"
+              <label class="form-label small fw-semibold">Tests (optional)</label>
+              <textarea
                 v-model="treatmentForm.tests"
+                rows="2"
                 class="form-control form-control-sm"
-                placeholder="Eg: CBC, LFT, X-Ray chest"
-              />
+                placeholder="One per line, Eg:
+CBC
+LFT
+Chest X-ray"
+              ></textarea>
               <div class="form-text small">
-                Comma separated list of lab / imaging tests.
+                One test per line; shown as comma-separated in history.
               </div>
             </div>
 
@@ -379,17 +504,21 @@
 
           <div class="row g-3 mt-1">
             <div class="col-md-8">
-              <label class="form-label small fw-semibold">Medicines & dosage pattern</label>
+              <label class="form-label small fw-semibold">Medicines (pattern-based)</label>
               <textarea
                 v-model="treatmentForm.medicines"
-                rows="2"
+                rows="3"
                 class="form-control form-control-sm"
-                placeholder="Eg: DOLO650-1-1-1 | PANTOP40-1-0-1"
+                placeholder="One per line, Eg:
+DOLO 650 | 1-1-1 | 5 days
+PANTOP 40 | 1-0-1 | 7 days"
               ></textarea>
               <div class="form-text small">
-                Pattern format
-                <code>1-0-1</code> = morning – none – night,
-                <code>1-1-1</code> = thrice a day.
+                <strong>Format:</strong> Name | pattern | days.
+                Example patterns:
+                <code>1-0-1</code> (morning & night),
+                <code>1-1-1</code> (three times / day).
+                Patient history converts this into 0/1 grid.
               </div>
             </div>
 
@@ -401,7 +530,7 @@
                 class="form-control form-control-sm"
               />
               <div class="form-text small">
-                Optional. Shows in patient history if set.
+                Optional review date.
               </div>
             </div>
           </div>
@@ -412,7 +541,7 @@
               v-model="treatmentForm.precautions"
               rows="2"
               class="form-control form-control-sm"
-              placeholder="Eg: Avoid spicy food, drink plenty of water, walk 30 mins/day"
+              placeholder="Eg: Avoid spicy food, hydrate well, 30-min walk daily."
             ></textarea>
           </div>
 
@@ -422,14 +551,14 @@
               v-model="treatmentForm.notes"
               rows="2"
               class="form-control form-control-sm"
-              placeholder="Any extra advice or clinical notes that should appear in history."
+              placeholder="Any extra advice or clinical notes to show in history."
             ></textarea>
           </div>
         </div>
 
         <div class="modal-footer d-flex justify-content-between align-items-center">
           <div class="small text-muted">
-            These details will be visible in the patient’s
+            Saved data will appear in the patient’s
             <strong>Visit History</strong>.
           </div>
           <div class="d-flex gap-2">
@@ -457,6 +586,60 @@
         </div>
       </div>
     </div>
+
+    <!-- ============ CUSTOM CONFIRM MODAL ============ -->
+    <div v-if="confirmVisible" class="modal-backdrop-custom">
+      <div class="modal-card confirm-card">
+        <div class="modal-header d-flex justify-content-between align-items-center">
+          <div class="d-flex align-items-center gap-2">
+            <div class="confirm-icon-circle" :class="confirmVariantClass">
+              <i
+                v-if="confirmVariant === 'danger'"
+                class="bi bi-exclamation-triangle"
+              ></i>
+              <i
+                v-else
+                class="bi bi-question-circle"
+              ></i>
+            </div>
+            <h6 class="mb-0">{{ confirmTitle }}</h6>
+          </div>
+          <button
+            type="button"
+            class="btn-close"
+            @click="hideConfirm"
+          ></button>
+        </div>
+
+        <div class="modal-body small">
+          <p class="mb-0">{{ confirmMessage }}</p>
+        </div>
+
+        <div class="modal-footer d-flex justify-content-end gap-2">
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm"
+            @click="hideConfirm"
+            :disabled="confirmProcessing"
+          >
+            {{ confirmCancelLabel }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            :class="confirmPrimaryClass"
+            @click="runConfirm"
+            :disabled="confirmProcessing"
+          >
+            <span
+              v-if="confirmProcessing"
+              class="spinner-border spinner-border-sm me-1"
+            ></span>
+            {{ confirmPrimaryLabel }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -469,18 +652,26 @@ const router = useRouter()
 
 const loading = ref(false)
 const errorMessage = ref('')
+const lastRefreshed = ref(null)
 
-const summary = ref(null) // full dashboard payload
+const summary = ref(null)
 const doctor = computed(() => summary.value?.doctor || null)
 const appointmentsToday = computed(() => summary.value?.upcoming_appointments || [])
 const assignedPatients = computed(() => summary.value?.assigned_patients || [])
+
+const nextAppointment = computed(() => {
+  const list = appointmentsToday.value || []
+  return list.length ? list[0] : null
+})
 
 const statusFilter = ref('all')
 const statusLoadingId = ref(null)
 const targetStatus = ref(null)
 
+// Treatment modal state
 const showTreatmentModal = ref(false)
 const activeAppointment = ref(null)
+const hasExistingTreatment = ref(false)
 const savingTreatment = ref(false)
 const treatmentForm = ref({
   visit_type: '',
@@ -489,10 +680,26 @@ const treatmentForm = ref({
   medicines: '',
   precautions: '',
   notes: '',
-  follow_up_date: '',
+  follow_up_date: ''
 })
 
-const todayStr = new Date().toISOString().slice(0, 10)
+const todayHuman = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'long',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric'
+}).format(new Date())
+
+const lastRefreshedLabel = computed(() => {
+  if (!lastRefreshed.value) return 'just now'
+  const diffMs = Date.now() - lastRefreshed.value.getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin <= 0) return 'just now'
+  if (diffMin === 1) return '1 min ago'
+  if (diffMin < 60) return `${diffMin} mins ago`
+  const diffH = Math.floor(diffMin / 60)
+  return `${diffH} hr${diffH > 1 ? 's' : ''} ago`
+})
 
 const loadDashboard = async () => {
   loading.value = true
@@ -500,6 +707,7 @@ const loadDashboard = async () => {
   try {
     const res = await api.get('/doctor/dashboard-summary')
     summary.value = res.data || {}
+    lastRefreshed.value = new Date()
   } catch (err) {
     errorMessage.value =
       err?.response?.data?.message || 'Failed to load doctor dashboard.'
@@ -511,52 +719,160 @@ const loadDashboard = async () => {
 const filteredAppointments = computed(() => {
   const list = appointmentsToday.value || []
   if (statusFilter.value === 'all') return list
-  return list.filter(
-    (a) => (a.status || '').toUpperCase() === statusFilter.value.toUpperCase()
-  )
+  const target = statusFilter.value.toUpperCase()
+  return list.filter(a => (a.status || '').toUpperCase() === target)
 })
 
-const statusBadgeClass = (status) => {
+const statusBadgeClass = status => {
   const s = (status || '').toUpperCase()
-  if (s === 'COMPLETED') return 'bg-success-subtle text-success-emphasis'
-  if (s === 'CANCELLED') return 'bg-danger-subtle text-danger-emphasis'
-  if (s === 'BOOKED') return 'bg-primary-subtle text-primary-emphasis'
-  return 'bg-secondary-subtle text-secondary-emphasis'
+  if (s === 'COMPLETED') return 'bg-success-soft text-success-emphasis'
+  if (s === 'CANCELLED') return 'bg-danger-soft text-danger-emphasis'
+  if (s === 'BOOKED') return 'bg-primary-soft text-primary-emphasis'
+  return 'bg-secondary-soft text-secondary-emphasis'
 }
 
-const prettyDate = (dateStr) => {
+const statusUpper = appt => (appt.status || '').toUpperCase()
+
+const canComplete = appt => statusUpper(appt) === 'BOOKED'
+const canCancel = appt => statusUpper(appt) === 'BOOKED'
+const canUpdateVisit = appt => statusUpper(appt) !== 'CANCELLED'
+
+const prettyDate = dateStr => {
   if (!dateStr) return 'N/A'
   const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return dateStr
+  if (Number.isNaN(d.getTime())) return dateStr
   return d.toLocaleDateString()
 }
 
-const updateStatus = async (appt, newStatus) => {
-  if (!appt?.id) return
-  if (newStatus === 'CANCELLED' && !confirm('Cancel this appointment?')) return
+/* ========== Confirm modal state ========== */
+const confirmVisible = ref(false)
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const confirmPrimaryLabel = ref('Confirm')
+const confirmCancelLabel = ref('Cancel')
+const confirmVariant = ref('primary')
+const confirmProcessing = ref(false)
+const pendingAction = ref(null)
 
+const confirmVariantClass = computed(() =>
+  confirmVariant.value === 'danger' ? 'confirm-icon-danger' : 'confirm-icon-primary'
+)
+const confirmPrimaryClass = computed(() =>
+  confirmVariant.value === 'danger' ? 'btn-danger' : 'btn-primary'
+)
+
+const showConfirm = (options) => {
+  confirmTitle.value = options.title || 'Are you sure?'
+  confirmMessage.value = options.message || ''
+  confirmPrimaryLabel.value = options.primaryLabel || 'Confirm'
+  confirmCancelLabel.value = options.cancelLabel || 'No'
+  confirmVariant.value = options.variant || 'primary'
+  pendingAction.value = options.onConfirm || null
+  confirmVisible.value = true
+  confirmProcessing.value = false
+}
+
+const hideConfirm = () => {
+  if (confirmProcessing.value) return
+  confirmVisible.value = false
+  pendingAction.value = null
+}
+
+/**
+ * FIXED: always clears spinner and closes popup even if API fails.
+ */
+const runConfirm = async () => {
+  if (!pendingAction.value) {
+    hideConfirm()
+    return
+  }
+  confirmProcessing.value = true
+  try {
+    await pendingAction.value()
+  } catch (e) {
+    // errorMessage is set inside pendingAction; just keep popup clean
+    console.error('Status change failed', e)
+  } finally {
+    confirmProcessing.value = false
+    hideConfirm()
+  }
+}
+
+/* ========== Status updates ========== */
+const askStatusChange = (appt, newStatus) => {
+  const upper = (newStatus || '').toUpperCase()
+  if (!appt?.id) return
+
+  let title = ''
+  let message = ''
+  let primaryLabel = ''
+  let variant = 'primary'
+
+  if (upper === 'COMPLETED') {
+    title = 'Mark visit as completed?'
+    message =
+      `This will mark the appointment for ${appt.patient_name || 'the patient'} at ` +
+      `${appt.time_slot || ''} as COMPLETED. You can still edit visit details later.`
+    primaryLabel = 'Mark completed'
+    variant = 'primary'
+  } else if (upper === 'CANCELLED') {
+    title = 'Cancel this appointment?'
+    message =
+      `This will cancel the appointment for ${appt.patient_name || 'the patient'} ` +
+      `and free up this time slot. This will appear in history.`
+    primaryLabel = 'Cancel appointment'
+    variant = 'danger'
+  } else {
+    title = 'Change status?'
+    message = `Change status of this appointment to ${upper}?`
+    primaryLabel = 'Change status'
+    variant = 'primary'
+  }
+
+  showConfirm({
+    title,
+    message,
+    primaryLabel,
+    cancelLabel: 'No, keep as is',
+    variant,
+    onConfirm: () => performStatusChange(appt, upper)
+  })
+}
+
+/**
+ * FIXED: rethrows on error so confirm modal can stop loading
+ */
+const performStatusChange = async (appt, upperStatus) => {
   statusLoadingId.value = appt.id
-  targetStatus.value = newStatus
+  targetStatus.value = upperStatus
   errorMessage.value = ''
 
   try {
     await api.post(`/doctor/appointments/${appt.id}/status`, {
-      status: newStatus,
+      status: upperStatus
     })
     await loadDashboard()
   } catch (err) {
     errorMessage.value =
       err?.response?.data?.message ||
-      `Failed to update status to ${newStatus}.`
+      `Failed to update status to ${upperStatus}.`
+    throw err           // let runConfirm handle cleanup
   } finally {
     statusLoadingId.value = null
     targetStatus.value = null
   }
 }
 
-const openTreatment = (appt) => {
+/* ========== Treatment modal (auto-fill) ========== */
+const openTreatment = async (appt) => {
+  if (!appt?.id) return
+
   activeAppointment.value = appt
-  // prefill minimal sensible defaults
+  showTreatmentModal.value = true
+  hasExistingTreatment.value = false
+  savingTreatment.value = false
+  errorMessage.value = ''
+
   treatmentForm.value = {
     visit_type: '',
     tests: '',
@@ -564,14 +880,35 @@ const openTreatment = (appt) => {
     medicines: '',
     precautions: '',
     notes: '',
-    follow_up_date: '',
+    follow_up_date: ''
   }
-  showTreatmentModal.value = true
+
+  try {
+    const res = await api.get(`/doctor/appointments/${appt.id}/treatment`)
+    if (res.data?.exists && res.data.treatment) {
+      const t = res.data.treatment
+      hasExistingTreatment.value = true
+
+      treatmentForm.value = {
+        visit_type: t.visit_type || '',
+        tests: t.tests_text || '',
+        diagnosis: t.diagnosis || '',
+        medicines: t.medicines_text || '',
+        precautions: t.precautions || '',
+        notes: t.notes || '',
+        follow_up_date: t.follow_up_date || ''
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load treatment for auto-fill', err)
+    // allow doctor to still type fresh
+  }
 }
 
 const closeTreatment = () => {
   showTreatmentModal.value = false
   activeAppointment.value = null
+  hasExistingTreatment.value = false
 }
 
 const saveTreatment = async () => {
@@ -587,22 +924,13 @@ const saveTreatment = async () => {
       medicines: treatmentForm.value.medicines || null,
       precautions: treatmentForm.value.precautions || null,
       notes: treatmentForm.value.notes || null,
-      follow_up_date: treatmentForm.value.follow_up_date || null,
+      follow_up_date: treatmentForm.value.follow_up_date || null
     }
 
     await api.post(
       `/doctor/appointments/${activeAppointment.value.id}/treatment`,
       payload
     )
-
-    // Optionally also mark as COMPLETED if still booked
-    // (You can remove this if you want separate control)
-    if ((activeAppointment.value.status || '').toUpperCase() === 'BOOKED') {
-      await api.post(
-        `/doctor/appointments/${activeAppointment.value.id}/status`,
-        { status: 'COMPLETED' }
-      )
-    }
 
     await loadDashboard()
     closeTreatment()
@@ -614,7 +942,8 @@ const saveTreatment = async () => {
   }
 }
 
-const goToPatientHistory = (patientId) => {
+/* ========== Navigation helpers ========== */
+const goToPatientHistory = patientId => {
   if (!patientId) return
   router.push({ path: '/doctor/patient-history', query: { patientId } })
 }
@@ -627,53 +956,85 @@ const goToAvailability = () => {
   router.push({ path: '/doctor/availability' })
 }
 
-onMounted(() => {
-  loadDashboard()
-})
+onMounted(loadDashboard)
 </script>
 
 <style scoped>
 .doctor-dashboard {
-  animation: fadeIn 0.3s ease;
+  animation: fadeIn 0.24s ease-out;
 }
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Top toolbar */
+.top-toolbar {
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid #e5e7eb;
+}
+.pill-badge {
+  font-size: 0.78rem;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: #eef2ff;
+  color: #4338ca;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
 }
 
 /* Banner */
 .banner {
-  border-radius: 18px;
-  background: linear-gradient(135deg, #eff6ff, #f5f3ff);
+  border-radius: 16px;
+  background: linear-gradient(135deg, #eff6ff, #ffffff);
+  overflow: hidden;
 }
-.page-icon {
-  height: 52px;
-  width: 52px;
-  border-radius: 20px;
-  background: #1d4ed8;
+.shadow-soft {
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+.page-avatar {
+  height: 48px;
+  width: 48px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #4f46e5, #2563eb);
   color: #eff6ff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.7rem;
+  font-size: 1.4rem;
 }
 .page-title {
   font-weight: 800;
+  font-size: 1.1rem;
 }
 .page-subtitle {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #4b5563;
 }
+.chip {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.chip-soft {
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+
+/* Signed-in pill */
 .badge-pill-text {
   padding: 3px 10px;
   border-radius: 999px;
-  background: #eef2ff;
+  background: rgba(224, 231, 255, 0.9);
 }
 .dot {
   display: inline-block;
@@ -686,9 +1047,43 @@ onMounted(() => {
   background: #22c55e;
 }
 
+/* Next appointment pill */
+.next-appt-pill {
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+.next-appt-icon {
+  height: 28px;
+  width: 28px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.95rem;
+}
+.next-appt-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+.next-appt-content {
+  max-width: 220px;
+}
+
+/* Toolbar buttons */
+.toolbar-btn {
+  border-radius: 999px;
+}
+
 /* Section titles */
 .section-title {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #6b7280;
@@ -696,25 +1091,50 @@ onMounted(() => {
 
 /* Stat cards */
 .stat-card {
-  border-radius: 16px;
-  padding: 10px 12px;
+  border-radius: 14px;
+  padding: 8px 12px;
   background: #ffffff;
   border: 1px solid #e5e7eb;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+.stat-header {
+  margin-bottom: 4px;
 }
 .stat-label {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #6b7280;
 }
+.stat-sub {
+  font-size: 0.74rem;
+  color: #9ca3af;
+}
 .stat-value {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   font-weight: 700;
   margin: 2px 0;
 }
 .stat-hint {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   color: #6b7280;
+}
+.stat-icon-wrap {
+  height: 26px;
+  width: 26px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+}
+.stat-icon {
+  font-size: 0.9rem;
+  opacity: 0.85;
 }
 .stat-primary {
   border-color: #bfdbfe;
@@ -754,7 +1174,41 @@ onMounted(() => {
   border-radius: 999px;
 }
 
-/* Modal */
+/* Empty state */
+.empty-state .empty-icon {
+  font-size: 1.8rem;
+  color: #9ca3af;
+}
+
+/* Table */
+.table-head {
+  background: #f9fafb;
+}
+.appointments-table tbody tr {
+  transition: background-color 0.12s ease;
+}
+.appointments-table tbody tr:hover {
+  background-color: #f9fafb;
+}
+.status-pill {
+  padding-inline: 10px;
+}
+
+/* Soft badge variants */
+.bg-success-soft {
+  background: rgba(22, 163, 74, 0.12) !important;
+}
+.bg-danger-soft {
+  background: rgba(220, 38, 38, 0.12) !important;
+}
+.bg-primary-soft {
+  background: rgba(37, 99, 235, 0.12) !important;
+}
+.bg-secondary-soft {
+  background: rgba(148, 163, 184, 0.16) !important;
+}
+
+/* Modal backdrop (shared) */
 .modal-backdrop-custom {
   position: fixed;
   inset: 0;
@@ -764,11 +1218,13 @@ onMounted(() => {
   justify-content: center;
   z-index: 1050;
 }
+
+/* Main modal card */
 .modal-card {
   width: min(900px, 100% - 32px);
   background: #ffffff;
-  border-radius: 18px;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -776,18 +1232,54 @@ onMounted(() => {
 .modal-header,
 .modal-footer {
   padding: 10px 16px;
+}
+.modal-header {
   border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
 }
 .modal-footer {
   border-top: 1px solid #e5e7eb;
-  border-bottom: none;
 }
 .modal-body {
   padding: 10px 16px 12px;
   overflow-y: auto;
 }
 
-/* Fade */
+/* Confirm modal smaller card */
+.confirm-card {
+  width: min(420px, 100% - 32px);
+}
+
+/* Confirm icon */
+.confirm-icon-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+.confirm-icon-primary {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+}
+.confirm-icon-danger {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+/* Transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Typography */
 .small {
   font-size: 0.8rem;
 }

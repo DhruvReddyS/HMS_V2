@@ -1,22 +1,58 @@
 # routes/patient_routes.py
 
-from flask import request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from datetime import datetime, date, time, timedelta
+from flask import request, jsonify, send_file, abort, Response
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+from datetime import datetime, date
+import os
+import re
+import csv
+from io import StringIO
 
-from models import db, User, Patient, Doctor, Appointment, Treatment
+from celery.result import AsyncResult
+
+from models import (
+    db,
+    User,
+    Patient,
+    Doctor,
+    Appointment,
+    Treatment,
+    DoctorAvailability,   # NEW: availability table
+)
+
+from celery_worker import celery
+from tasks.export_tasks import export_patient_history_csv
+
+from cache_utils import cached, cache_delete_pattern  # ✅ Redis caching helpers
+
+# Same slot grid as doctor weekly availability (1–2 PM break)
+DEFAULT_TIME_SLOTS = [
+    "09:00", "09:30",
+    "10:00", "10:30",
+    "11:00", "11:30",
+    "12:00", "12:30",
+    # 13:00–14:00 is lunch break → no slots here
+    "14:00", "14:30",
+    "15:00", "15:30",
+    "16:00", "16:30",
+]
 
 
 # -----------------------------------
-# Helper: get current patient + user
+# Helpers
 # -----------------------------------
 def _get_current_patient():
     """
     Resolves the current JWT user and ensures they are a patient.
     Uses 1–1 mapping: Patient.id == User.id
     """
-    user_id = get_jwt_identity()
-    if not user_id:
+    raw_id = get_jwt_identity()
+    if raw_id is None:
+        return None, None
+
+    try:
+        user_id = int(raw_id)
+    except (TypeError, ValueError):
         return None, None
 
     user = User.query.get(user_id)
@@ -27,12 +63,27 @@ def _get_current_patient():
     return user, patient
 
 
+def _require_patient():
+    """
+    Helper for endpoints that are strictly patient-only, returning:
+      (ok: bool, identity: dict | None, response: flask.Response | None)
+    """
+    claims = get_jwt()
+    role = claims.get("role")
+
+    if role != "patient":
+        return False, None, (jsonify({"message": "Patient access required"}), 403)
+
+    user_id = get_jwt_identity()
+    if user_id is None:
+        return False, None, (jsonify({"message": "Invalid token"}), 401)
+
+    return True, {"id": int(user_id)}, None
+
+
 # -----------------------------------
 # GET /api/patient/profile
 #   → Patient dashboard & profile page
-#   Logic w.r.t Admin/Doctor:
-#   - Admin can change user.email/username/is_active in separate admin routes.
-#   - Patient can see latest email/username as stored on User.
 # -----------------------------------
 @jwt_required()
 def get_patient_profile():
@@ -61,9 +112,6 @@ def get_patient_profile():
 # -----------------------------------
 # PUT /api/patient/profile
 #   → Patient can update own health/contact info.
-#   Logic w.r.t Admin/Doctor:
-#   - Admin may also edit Patient in separate admin routes if needed.
-#   - Doctors only read this data; they never modify patient profile.
 # -----------------------------------
 @jwt_required()
 def update_patient_profile():
@@ -82,13 +130,17 @@ def update_patient_profile():
     # Numeric fields – safe parsing
     if "height_cm" in data:
         try:
-            patient.height_cm = float(data["height_cm"]) if data["height_cm"] is not None else None
+            patient.height_cm = (
+                float(data["height_cm"]) if data["height_cm"] is not None else None
+            )
         except (TypeError, ValueError):
             pass
 
     if "weight_kg" in data:
         try:
-            patient.weight_kg = float(data["weight_kg"]) if data["weight_kg"] is not None else None
+            patient.weight_kg = (
+                float(data["weight_kg"]) if data["weight_kg"] is not None else None
+            )
         except (TypeError, ValueError):
             pass
 
@@ -107,12 +159,10 @@ def update_patient_profile():
 # -----------------------------------
 # GET /api/patient/doctors
 #   → List of doctors for dropdown / browsing.
-#   Logic w.r.t Admin/Doctor:
-#   - Only doctors with User.is_active = True are shown.
-#   - If admin deactivates a doctor (is_active=False), they instantly
-#     disappear from patient side and cannot be booked anymore.
+#   (Cached, same for all patients)
 # -----------------------------------
 @jwt_required()
+@cached(prefix="patient_doctors", ttl=300)
 def list_patient_doctors():
     doctors = (
         Doctor.query
@@ -130,29 +180,25 @@ def list_patient_doctors():
             "experience_years": d.experience_years,
             "about": d.about,
         })
-    return jsonify(result), 200
+
+    # return dict/list so @cached can jsonify + store
+    return result
 
 
 # -----------------------------------
 # GET /api/patient/available-slots?doctor_id=&date=YYYY-MM-DD
 #
 #   → Returns slots with status: "free" / "booked"
-#
-#   Logic w.r.t Admin/Doctor:
-#   - Only active doctors (User.is_active=True) are considered.
-#   - Any appointment with status != "CANCELLED" blocks that slot.
-#     So if doctor/admin marks appointment COMPLETED or still BOOKED,
-#     that slot is busy.
-#   - If doctor/admin cancels an appointment (status="CANCELLED"),
-#     this slot becomes free again.
+#   (Cached per doctor_id+date)
 # -----------------------------------
 @jwt_required()
+@cached(prefix="patient_slots", ttl=30)
 def patient_available_slots():
     doctor_id = request.args.get("doctor_id", type=int)
     date_str = request.args.get("date")
 
     if not doctor_id or not date_str:
-        return jsonify({"message": "doctor_id and date are required"}), 400
+        return {"message": "doctor_id and date are required"}, 400
 
     # Ensure doctor exists AND is active from admin side
     doctor = (
@@ -166,30 +212,27 @@ def patient_available_slots():
         .first()
     )
     if not doctor:
-        return jsonify({"message": "Doctor not found or inactive"}), 404
+        return {"message": "Doctor not found or inactive"}, 404
 
     # Validate date
     try:
         appt_date = datetime.fromisoformat(date_str).date()
     except Exception:
-        return jsonify({"message": "Invalid date format"}), 400
+        return {"message": "Invalid date format"}, 400
 
     # Optional: disallow past dates
     if appt_date < date.today():
-        return jsonify({"message": "Date cannot be in the past"}), 400
+        return {"message": "Date cannot be in the past"}, 400
 
-    # Working hours 09:00–17:00, 30-min slots, "HH:MM"
-    start_time = time(9, 0)
-    end_time = time(17, 0)
+    # ---- 1) Doctor-specific availability overrides ----
+    overrides = (
+        DoctorAvailability.query
+        .filter_by(doctor_id=doctor.id, date=date_str)
+        .all()
+    )
+    override_map = {o.time_slot: o.is_available for o in overrides}
 
-    slots = []
-    current_dt = datetime.combine(appt_date, start_time)
-    end_dt = datetime.combine(appt_date, end_time)
-    while current_dt < end_dt:
-        slots.append(current_dt.strftime("%H:%M"))  # "10:00"
-        current_dt += timedelta(minutes=30)
-
-    # Appointments that block slots
+    # ---- 2) Appointments that block slots (anything not CANCELLED) ----
     booked = (
         Appointment.query
         .filter_by(doctor_id=doctor.id, date=date_str)
@@ -198,25 +241,29 @@ def patient_available_slots():
     )
     booked_slots = {a.time for a in booked}
 
-    # Include status for red/green UI
-    detailed_slots = [
-        {
-            "time": s,
-            "status": "booked" if s in booked_slots else "free",
-        }
-        for s in slots
-    ]
+    # ---- 3) Build final slots (same grid as doctor weekly view) ----
+    detailed_slots = []
+    for ts in DEFAULT_TIME_SLOTS:
+        # First check if there is an appointment on that slot
+        if ts in booked_slots:
+            status = "booked"
+        else:
+            # then check doctor's availability override
+            is_av = override_map.get(ts, True)  # default True = available
+            status = "free" if is_av else "booked"
 
-    return jsonify({"slots": detailed_slots}), 200
+        detailed_slots.append({
+            "time": ts,
+            "status": status,
+        })
+
+    return {"slots": detailed_slots}
 
 
 # -----------------------------------
 # GET /api/patient/appointments
 #   → List all appointments for logged-in patient.
-#
-#   Logic w.r.t Admin/Doctor:
-#   - Doctors & admins may update Appointment.status (BOOKED/COMPLETED/CANCELLED)
-#     in their own routes; patient just sees the final state here.
+#   (NOT cached → per-patient + frequently changing)
 # -----------------------------------
 @jwt_required()
 def get_patient_appointments():
@@ -231,7 +278,6 @@ def get_patient_appointments():
         .all()
     )
 
-    # Use helper so patient gets doctor_name + specialization, etc.
     result = [a.to_patient_dict() for a in appts]
     return jsonify(result), 200
 
@@ -239,10 +285,6 @@ def get_patient_appointments():
 # -----------------------------------
 # GET /api/patient/appointments/<appointment_id>
 #   → Detailed view for a single appointment.
-#
-#   Logic:
-#   - Patient can only see appointments that belong to them.
-#   - Doctors/admins can have separate detailed endpoints if needed.
 # -----------------------------------
 @jwt_required()
 def get_single_patient_appointment(appointment_id):
@@ -264,14 +306,6 @@ def get_single_patient_appointment(appointment_id):
 # -----------------------------------
 # POST /api/patient/appointments
 #   → Create a new appointment.
-#
-#   Logic w.r.t Admin/Doctor:
-#   - Only active doctors can be booked (User.is_active=True).
-#   - If admin later deactivates a doctor, existing appointments
-#     still exist, but new bookings cannot be created.
-#   - Slot conflict:
-#       If another patient books the same doctor/date/time and
-#       doctor/admin doesn't cancel it, slot is blocked.
 # -----------------------------------
 @jwt_required()
 def create_patient_appointment():
@@ -283,7 +317,7 @@ def create_patient_appointment():
 
     doctor_id = data.get("doctor_id")
     date_str = data.get("appointment_date")  # "YYYY-MM-DD"
-    time_slot = data.get("time_slot")        # "HH:MM" or formatted
+    time_slot = data.get("time_slot")        # "HH:MM"
     reason = (data.get("reason") or "").strip() or None
 
     if not doctor_id or not date_str or not time_slot:
@@ -337,6 +371,15 @@ def create_patient_appointment():
     db.session.add(appt)
     db.session.commit()
 
+    # 🔥 Invalidate caches impacted by new appointment
+    cache_delete_pattern("API:patient_slots:*")
+    cache_delete_pattern("API:doctor_dashboard:*")
+    cache_delete_pattern("API:doctor_appointments:*")
+    cache_delete_pattern("API:admin_stats:*")
+    cache_delete_pattern("API:admin_appointments:*")
+    cache_delete_pattern("API:patient_appointments:*")
+    cache_delete_pattern("API:patient_history:*")
+
     return jsonify({
         "message": "Appointment booked successfully",
         "appointment": appt.to_patient_dict(),
@@ -345,13 +388,7 @@ def create_patient_appointment():
 
 # -----------------------------------
 # POST /api/patient/appointments/<appointment_id>/cancel
-#
-#   Logic w.r.t Admin/Doctor:
-#   - Patient can cancel only their own appointments.
-#   - You may decide business rules:
-#       * Disallow cancelling COMPLETED ones.
-#       * Optionally disallow cancelling past dates.
-#   - Once cancelled, slot becomes free again in available-slots.
+#   → Cancel an upcoming appointment.
 # -----------------------------------
 @jwt_required()
 def cancel_patient_appointment(appointment_id):
@@ -370,22 +407,30 @@ def cancel_patient_appointment(appointment_id):
     if appt.status == "CANCELLED":
         return jsonify({"message": "Already cancelled"}), 200
 
-    # Example stricter rules:
-    #  - don't allow cancelling COMPLETED appointments
+    # don't allow cancelling COMPLETED appointments
     try:
-        appt_date = datetime.fromisoformat(appt.date).date()
+        appt_date = datetime.fromisoformat(str(appt.date)).date()
     except Exception:
         appt_date = None
 
     if appt.status == "COMPLETED":
         return jsonify({"message": "Cannot cancel a completed appointment"}), 400
 
-    # Optional: restrict cancelling past appointments at all
+    # Optional: restrict cancelling past appointments
     if appt_date and appt_date < date.today():
         return jsonify({"message": "Cannot cancel past appointments"}), 400
 
     appt.status = "CANCELLED"
     db.session.commit()
+
+    # 🔥 Invalidate caches impacted by cancellation
+    cache_delete_pattern("API:patient_slots:*")
+    cache_delete_pattern("API:doctor_dashboard:*")
+    cache_delete_pattern("API:doctor_appointments:*")
+    cache_delete_pattern("API:admin_stats:*")
+    cache_delete_pattern("API:admin_appointments:*")
+    cache_delete_pattern("API:patient_appointments:*")
+    cache_delete_pattern("API:patient_history:*")
 
     return jsonify({"message": "Appointment cancelled successfully"}), 200
 
@@ -394,11 +439,7 @@ def cancel_patient_appointment(appointment_id):
 # GET /api/patient/history
 #
 #   → Visit history for patient including treatments.
-#
-#   Logic w.r.t Admin/Doctor:
-#   - Doctor endpoints will create Treatment rows and mark appointment
-#     status as COMPLETED when consultation is done.
-#   - Patient here only reads combined info: appointment + latest treatment.
+#   (NOT cached – per-patient & sensitive)
 # -----------------------------------
 @jwt_required()
 def get_patient_history():
@@ -423,7 +464,7 @@ def get_patient_history():
             latest_t = max(a.treatments, key=lambda x: x.created_at or datetime.min)
             item["treatment"] = latest_t.to_dict()
 
-            # optional: full treatment history for that appointment
+            # full treatment history for that appointment
             item["all_treatments"] = [t.to_dict() for t in a.treatments]
         else:
             item["treatment"] = None
@@ -432,3 +473,174 @@ def get_patient_history():
         history.append(item)
 
     return jsonify(history), 200
+
+
+# -----------------------------------
+# GET /api/patient/history/export-csv
+#
+#   → Simple sync CSV export for current patient (no Celery).
+# -----------------------------------
+@jwt_required()
+def patient_history_export_csv():
+    user, patient = _get_current_patient()
+    if not patient:
+        return jsonify({"message": "Patient not found or invalid role"}), 404
+
+    appts = (
+        Appointment.query
+        .filter_by(patient_id=patient.id)
+        .order_by(Appointment.date.desc(), Appointment.created_at.desc())
+        .all()
+    )
+
+    if not appts:
+        return jsonify({"message": "No history found to export"}), 404
+
+    # Build CSV in memory
+    output = StringIO()
+    writer = csv.writer(output)
+
+    headers = [
+        "Date", "Time", "Doctor", "Specialization", "Reason", "Status",
+        "Diagnosis", "Visit type", "Tests", "Follow-up date",
+        "Medicines", "Precautions", "Advice / Notes",
+    ]
+    writer.writerow(headers)
+
+    for a in appts:
+        t = a.treatments[-1] if a.treatments else None
+
+        doctor_name = f"Dr. {a.doctor.full_name}" if a.doctor else ""
+        specialization = a.doctor.specialization if a.doctor else ""
+
+        diagnosis = getattr(t, "diagnosis", "") if t else ""
+        visit_type = getattr(t, "visit_type", "") if t else ""
+        tests_text = getattr(t, "tests_text", "") if t else ""
+
+        # SAFE follow_up_date (string OR date/datetime)
+        follow_up_date = ""
+        if t and getattr(t, "follow_up_date", None):
+            fud = t.follow_up_date
+            if isinstance(fud, (datetime, date)):
+                follow_up_date = fud.strftime("%Y-%m-%d")
+            else:
+                follow_up_date = str(fud)
+
+        prescription = getattr(t, "prescription", "") if t else ""
+        precautions = getattr(t, "precautions", "") if t else ""
+        notes = getattr(t, "notes", "") if t else ""
+
+        row = [
+            a.date,
+            a.time,
+            doctor_name,
+            specialization,
+            a.reason or "",
+            (a.status or "").capitalize(),
+            diagnosis,
+            visit_type,
+            tests_text,
+            follow_up_date,
+            prescription,
+            precautions,
+            notes,
+        ]
+        writer.writerow(row)
+
+    csv_data = output.getvalue()
+    output.close()
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={
+            # what the browser will show as filename
+            "Content-Disposition": "attachment; filename=visit_history.csv"
+        },
+    )
+
+
+# =====================================================
+# EXPORT VISIT HISTORY (CSV) USING CELERY + REDIS
+# =====================================================
+
+# 1. Trigger export (async job)
+# POST /api/patient/export-history
+@jwt_required()
+def patient_export_history():
+    ok, identity, resp = _require_patient()
+    if not ok:
+        return resp
+
+    patient_user_id = identity["id"]
+    user = User.query.get(patient_user_id)
+    if not user or user.role != "patient":
+        return jsonify({"message": "Invalid patient"}), 400
+
+    task = export_patient_history_csv.delay(patient_user_id)
+
+    return jsonify({
+        "message": "Export started. You will be notified when it's ready.",
+        "task_id": task.id,
+    }), 202
+
+
+# 2. Check export status
+# GET /api/patient/export-history/status/<task_id>
+@jwt_required()
+def patient_export_history_status(task_id):
+    ok, identity, resp = _require_patient()
+    if not ok:
+        return resp
+
+    result = AsyncResult(task_id, app=celery)
+    state = result.state
+
+    data = {
+        "task_id": task_id,
+        "state": state,   # PENDING / STARTED / SUCCESS / FAILURE / ...
+        "ready": False,
+    }
+
+    if state == "SUCCESS":
+        data["ready"] = True
+    elif state == "FAILURE":
+        data["error"] = str(result.info)
+
+    return jsonify(data), 200
+
+
+# 3. Download final CSV (Celery version)
+# GET /api/patient/export-history/download/<task_id>
+@jwt_required()
+def patient_export_history_download(task_id):
+    ok, identity, resp = _require_patient()
+    if not ok:
+        return resp
+
+    patient_user_id = identity["id"]
+    result = AsyncResult(task_id, app=celery)
+
+    if result.state != "SUCCESS":
+        return jsonify({"message": "Export not ready yet"}), 400
+
+    file_path = result.result
+    if not file_path or not isinstance(file_path, str):
+        return jsonify({"message": "Invalid export result"}), 500
+
+    # Security: ensure this file belongs to this patient
+    # filename like: visit_history_patient_(id)_YYYY-MM-DDT...
+    filename = os.path.basename(file_path)
+    m = re.match(r"visit_history_patient_(\d+)_", filename)
+    if not m or str(patient_user_id) != m.group(1):
+        return jsonify({"message": "Not authorized to download this file"}), 403
+
+    if not os.path.exists(file_path):
+        abort(404, description="Export file not found on server")
+
+    return send_file(
+        file_path,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="visit-history.csv",
+    )

@@ -1,0 +1,36 @@
+Date,Time,Doctor,Specialization,Reason,Status,Diagnosis,Visit type,Tests,Follow-up date,Medicines,Precautions,Advice / Notes
+2025-12-17,11:00,Dr. Dr. Anjali Deshmukh,Pulmonologist,Fever and body pain,Booked,,,,,,,
+2025-12-17,15:30,Dr. Dr. Kavya Rao,Neurologist,Back and knee pain,Booked,,,,,,,
+2025-12-15,16:30,Dr. Dr. Siddharth Jain,Endocrinologist,Ear pain and discharge,Booked,,,,,,,
+2025-12-15,14:00,Dr. Dr. Priya Menon,Psychiatrist,Anxiety and sleep issues,Booked,,,,,,,
+2025-12-13,11:00,Dr. Dr. Kavya Rao,Neurologist,Back and knee pain,Booked,,,,,,,
+2025-12-12,10:30,Dr. Dr. Anjali Deshmukh,Pulmonologist,Frequent headaches,Booked,,,,,,,
+2025-12-10,09:00,Dr. Dr. Rohan Kulkarni,ENT Specialist,Chest discomfort,Booked,,,,,,,
+2025-12-10,14:30,Dr. Dr. Priya Menon,Psychiatrist,Fever and body pain,Booked,,,,,,,
+2025-12-06,16:00,Dr. Dr. Vivek Sharma,Dermatologist,Ear pain and discharge,Booked,,,,,,,
+2025-12-04,09:30,Dr. Dr. Priya Menon,Psychiatrist,Cough and breathing difficulty,Booked,,,,,,,
+2025-11-27,11:00,Dr. Dr. Kavya Rao,Neurologist,Ear pain and discharge,Booked,,,,,,,
+2025-11-27,09:30,Dr. Dr. Meera Nair,Orthopedic Surgeon,Anxiety and sleep issues,Booked,,,,,,,
+2025-11-27,16:30,Dr. Dr. Anjali Deshmukh,Pulmonologist,Routine health checkup,Cancelled,,,,,,,
+2025-11-27,10:30,Dr. Dr. Rahul Verma,Pediatrician,Skin rashes and itching,Booked,,,,,,,
+2025-11-27,16:00,Dr. Dr. Arjun Reddy,General Physician,Throat infection,Booked,,,,,,,
+2025-11-26,15:30,Dr. Dr. Priya Menon,Psychiatrist,Fever and body pain,Cancelled,,,,,,,
+2025-11-25,14:30,Dr. Dr. Vivek Sharma,Dermatologist,Chest discomfort,Cancelled,,,,,,,
+2025-11-23,10:00,Dr. Dr. Rohan Kulkarni,ENT Specialist,Fever and body pain,Completed,Pharyngitis,IN_PERSON,"KFT, Lipid profile, CBC",2025-12-12,"Tab TELMISARTAN 40 mg | 1-0-0 | 30 days
+Tab METFORMIN 500 mg | 1-0-1 | 30 days
+Tab NAPROXEN 250 mg | 1-0-1 | 5 days
+Tab DOLO 650 mg | 1-1-1 | 5 days",Drink plenty of water. Check temperature every 6 hours and note it down.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-22,15:00,Dr. Dr. Siddharth Jain,Endocrinologist,Diabetes follow-up,Completed,PCOS – evaluation,IN_PERSON,ECG,2025-12-08,"Tab NAPROXEN 250 mg | 1-0-1 | 5 days
+Tab METFORMIN 500 mg | 1-0-1 | 30 days",Take adequate rest and sleep at least 7–8 hours. Limit salt intake in food.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-20,15:30,Dr. Dr. Vivek Sharma,Dermatologist,Diabetes follow-up,Completed,Fungal skin infection,IN_PERSON,"Fasting blood sugar, HbA1c",2025-12-20,"Syp Azee 200 mg | 5 ml 1-0-0 | 3 days
+Tab METFORMIN 500 mg | 1-0-1 | 30 days
+Inj VACCINE (per schedule)",Do regular walking for 30 minutes daily. Take adequate rest and sleep at least 7–8 hours.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-19,11:00,Dr. Dr. Siddharth Jain,Endocrinologist,Routine health checkup,Completed,PCOS – evaluation,IN_PERSON,"KFT, Thyroid profile, Chest X-ray",2025-12-19,"Tab DOLO 650 mg | 1-1-1 | 5 days
+Tab METFORMIN 500 mg | 1-0-1 | 30 days
+Tab AZITHROMYCIN 500 mg | 1-0-0 | 3 days after food
+Tab CETIRIZINE 10 mg | 0-0-1 | 5 days",Check temperature every 6 hours and note it down. Avoid screens 1 hour before sleeping.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-17,12:00,Dr. Dr. Meera Nair,Orthopedic Surgeon,Frequent headaches,Cancelled,,,,,,,
+2025-11-17,14:30,Dr. Dr. Rahul Verma,Pediatrician,Diabetes follow-up,Completed,Viral fever – pediatric,IN_PERSON,"CBC, CRP",2025-12-07,"Tab MONTELUKAST+LEVOCET | 0-0-1 | 10 days
+Tab DOLO 650 mg | 1-1-1 | 5 days
+Tab CETIRIZINE 10 mg | 0-0-1 | 5 days
+Syp Azee 200 mg | 5 ml 1-0-0 | 3 days",Limit salt intake in food. Do regular walking for 30 minutes daily.,Patient advised as per prescription. Review if symptoms worsen.

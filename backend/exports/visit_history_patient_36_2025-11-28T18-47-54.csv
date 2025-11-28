@@ -1,0 +1,34 @@
+Date,Time,Doctor,Specialization,Reason,Status,Diagnosis,Visit type,Tests,Follow-up date,Medicines,Precautions,Advice / Notes
+2025-12-17,11:30,Dr. Dr. Priya Menon,Psychiatrist,Diabetes follow-up,Booked,,,,,,,
+2025-12-17,11:00,Dr. Dr. Siddharth Jain,Endocrinologist,Chest discomfort,Booked,,,,,,,
+2025-12-17,16:00,Dr. Dr. Kavya Rao,Neurologist,Chest discomfort,Booked,,,,,,,
+2025-12-16,14:00,Dr. Dr. Kavya Rao,Neurologist,Frequent headaches,Booked,,,,,,,
+2025-12-15,14:00,Dr. Dr. Siddharth Jain,Endocrinologist,Cough and breathing difficulty,Booked,,,,,,,
+2025-12-13,16:30,Dr. Dr. Arjun Reddy,General Physician,Skin rashes and itching,Booked,,,,,,,
+2025-12-13,09:30,Dr. Dr. Meera Nair,Orthopedic Surgeon,Anxiety and sleep issues,Booked,,,,,,,
+2025-12-11,11:00,Dr. Dr. Rohan Kulkarni,ENT Specialist,Frequent headaches,Booked,,,,,,,
+2025-12-10,11:00,Dr. Dr. Siddharth Jain,Endocrinologist,Throat infection,Booked,,,,,,,
+2025-12-07,09:30,Dr. Dr. Meera Nair,Orthopedic Surgeon,Ear pain and discharge,Booked,,,,,,,
+2025-12-05,10:00,Dr. Dr. Kavya Rao,Neurologist,Anxiety and sleep issues,Booked,,,,,,,
+2025-12-05,10:30,Dr. Dr. Meera Nair,Orthopedic Surgeon,Child vaccination,Booked,,,,,,,
+2025-12-03,15:30,Dr. Dr. Vivek Sharma,Dermatologist,Diabetes follow-up,Booked,,,,,,,
+2025-12-01,15:30,Dr. Dr. Sneha Iyer,Cardiologist,Fever and body pain,Booked,,,,,,,
+2025-11-30,09:00,Dr. Dr. Vivek Sharma,Dermatologist,Skin rashes and itching,Booked,,,,,,,
+2025-11-29,09:30,Dr. Dr. Siddharth Jain,Endocrinologist,Chest discomfort,Booked,,,,,,,
+2025-11-28,14:00,Dr. Dr. Rohan Kulkarni,ENT Specialist,Ear pain and discharge,Booked,,,,,,,
+2025-11-27,10:00,Dr. Dr. Sneha Iyer,Cardiologist,Chest discomfort,Booked,,,,,,,
+2025-11-27,16:00,Dr. Dr. Vivek Sharma,Dermatologist,Ear pain and discharge,Cancelled,,,,,,,
+2025-11-26,09:30,Dr. Dr. Vivek Sharma,Dermatologist,Frequent headaches,Completed,Urticaria,IN_PERSON,ECG,2025-12-26,"Tab MONTELUKAST+LEVOCET | 0-0-1 | 10 days
+Inj VACCINE (per schedule)
+Tab TELMISARTAN 40 mg | 1-0-0 | 30 days
+Tab NAPROXEN 250 mg | 1-0-1 | 5 days",Limit salt intake in food. Take adequate rest and sleep at least 7–8 hours.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-24,14:30,Dr. Dr. Siddharth Jain,Endocrinologist,Fever and body pain,Completed,Type 2 diabetes – uncontrolled,IN_PERSON,"Fasting blood sugar, HbA1c",2025-12-23,"Tab TELMISARTAN 40 mg | 1-0-0 | 30 days
+Tab CETIRIZINE 10 mg | 0-0-1 | 5 days
+Inj VACCINE (per schedule)",Take adequate rest and sleep at least 7–8 hours. Check temperature every 6 hours and note it down.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-19,14:00,Dr. Dr. Arjun Reddy,General Physician,Cough and breathing difficulty,Completed,Acute gastroenteritis,ONLINE,"ECG, HbA1c, Lipid profile",2025-12-10,"Tab CETIRIZINE 10 mg | 0-0-1 | 5 days
+Inj VACCINE (per schedule)
+Tab PANTOP 40 mg | 1-0-0 | 10 days",Avoid oily and spicy food. Do regular walking for 30 minutes daily.,Patient advised as per prescription. Review if symptoms worsen.
+2025-11-19,15:00,Dr. Dr. Rahul Verma,Pediatrician,Throat infection,Cancelled,,,,,,,
+2025-11-17,11:00,Dr. Dr. Priya Menon,Psychiatrist,Ear pain and discharge,Cancelled,,,,,,,
+2025-11-17,10:00,Dr. Dr. Anjali Deshmukh,Pulmonologist,Routine health checkup,Completed,Acute bronchitis,ONLINE,"KFT, CBC, Chest X-ray",2025-12-16,"Tab MONTELUKAST+LEVOCET | 0-0-1 | 10 days
+Tab PANTOP 40 mg | 1-0-0 | 10 days",Avoid cold drinks and ice cream. Avoid oily and spicy food.,Patient advised as per prescription. Review if symptoms worsen.

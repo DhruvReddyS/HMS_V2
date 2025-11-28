@@ -13,11 +13,40 @@
           </p>
         </div>
       </div>
+
+      <!-- EXPORT ACTIONS (CSV from backend + PDF frontend) -->
+      <div class="export-actions d-flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary rounded-pill"
+          :disabled="loading || exportingCsv || !filteredHistory.length"
+          @click="exportToCsv"
+        >
+          <i class="bi bi-file-earmark-spreadsheet me-1"></i>
+          <span v-if="exportingCsv">Generating...</span>
+          <span v-else>Download CSV</span>
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary rounded-pill"
+          :disabled="loading || !filteredHistory.length"
+          @click="exportToPdf"
+        >
+          <i class="bi bi-file-earmark-pdf me-1"></i>
+          Download PDF
+        </button>
+      </div>
     </div>
 
     <!-- ERROR -->
     <div v-if="errorMessage" class="alert alert-danger py-2 small mb-3">
       {{ errorMessage }}
+    </div>
+
+    <!-- SUCCESS -->
+    <div v-if="successMessage" class="alert alert-success py-2 small mb-3">
+      {{ successMessage }}
     </div>
 
     <!-- FILTERS -->
@@ -151,6 +180,13 @@
                     </span>
                   </li>
 
+                  <li v-if="item.treatment?.follow_up_date">
+                    <span class="label">Follow-up:</span>
+                    <span class="value">
+                      {{ formatDate(item.treatment.follow_up_date) }}
+                    </span>
+                  </li>
+
                   <li v-if="item.treatment?.created_at">
                     <span class="label">Updated:</span>
                     <span class="value">
@@ -242,7 +278,6 @@
                             <th class="text-center">Morn</th>
                             <th class="text-center">Noon</th>
                             <th class="text-center">Night</th>
-                            <th class="text-center">Bed</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -254,6 +289,12 @@
                               {{ m.name }}
                               <div class="small text-muted">
                                 Pattern: <code>{{ m.pattern }}</code>
+                              </div>
+                              <div
+                                v-if="m.extra"
+                                class="small text-muted"
+                              >
+                                Duration: {{ m.extra }}
                               </div>
                             </td>
 
@@ -287,16 +328,6 @@
                               </span>
                               <span v-else class="muted-dot">–</span>
                             </td>
-                            <td class="text-center">
-                              <span
-                                v-if="m.bedtime"
-                                class="dose-dot bed"
-                                :title="doseTitle('Bedtime', m.bedtime)"
-                              >
-                                {{ m.bedtime }}
-                              </span>
-                              <span v-else class="muted-dot">–</span>
-                            </td>
                           </tr>
                         </tbody>
                       </table>
@@ -317,13 +348,20 @@
                   <div class="col-md-4">
                     <h6 class="detail-title">Precautions & follow-up</h6>
 
-                    <div class="mb-2">
-                      <span class="badge rounded-pill bg-light text-muted border me-1">
+                    <div class="mb-2 d-flex flex-wrap gap-1">
+                      <span class="badge rounded-pill bg-light text-muted border">
                         Visit:
                         {{ parsedNotes(item).visitType
                           ? prettyVisitType(parsedNotes(item).visitType)
                           : 'Not specified'
                         }}
+                      </span>
+                      <span
+                        v-if="item.treatment?.follow_up_date"
+                        class="badge rounded-pill bg-light text-muted border"
+                      >
+                        Follow-up:
+                        {{ formatDate(item.treatment.follow_up_date) }}
                       </span>
                     </div>
 
@@ -359,6 +397,12 @@
           This history is appointment-wise. Each visit captures diagnosis, tests,
           medicines, dosage pattern and doctor’s instructions once the doctor
           updates the treatment details in the system.
+          <br />
+          <span class="fw-semibold">
+            Tip:
+          </span>
+          Use the filters above and then download your records in CSV or PDF
+          for personal reference or sharing with another doctor.
         </p>
       </div>
     </div>
@@ -369,18 +413,28 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api/axios'
 
-const history = ref([]) // data from /patient/history
+// PDF export libraries (frontend only)
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+
+const history = ref([]) // data from /api/patient/history
 const loading = ref(false)
 const errorMessage = ref('')
 
 const activeFilter = ref('all') // all | completed | cancelled
 const expandedIds = ref(new Set())
 
+// CSV export + success state
+const exportingCsv = ref(false)
+const successMessage = ref('')
+
 /* ------------ API ------------ */
 const loadHistory = async () => {
   loading.value = true
   errorMessage.value = ''
+  successMessage.value = ''
   try {
+    // axios baseURL should already be /api
     const res = await api.get('/patient/history')
     history.value = res.data || []
   } catch (err) {
@@ -453,47 +507,52 @@ const formatDateTime = (dateStr) => {
   return d.toLocaleString()
 }
 
-/* ------------ Parse notes (Tests, visit type, precautions) ------------ */
-/**
- * Notes format from seed / doctor:
- * "Tests done: X, Y | Visit type: IN_PERSON | Precautions: some text"
- */
+/* ------------ Parse notes / meta (Tests, visit type, precautions) ------------ */
 const parsedNotes = (item) => {
-  const t = item.treatment
-  const notes = (t && t.notes) || ''
-  const out = {
-    testsText: '',
-    testsArray: [],
-    visitType: '',
-    precautionsRaw: '',
+  const t = item.treatment || {}
+  let testsText = t.tests_text || t.tests || ''
+  let testsArray = []
+  let visitType = t.visit_type || ''
+  let precautionsRaw = t.precautions || ''
+  const notes = (t.notes || '')
+
+  if (testsText) {
+    testsArray = testsText
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
   }
 
-  if (!notes || typeof notes !== 'string') {
-    return out
-  }
+  // Backward compatibility: parse old encoded notes only if fields still empty
+  if ((!testsText || !visitType || !precautionsRaw) && notes && typeof notes === 'string') {
+    const parts = notes.split('|').map((p) => p.trim())
 
-  const parts = notes.split('|').map((p) => p.trim())
+    for (const part of parts) {
+      const lower = part.toLowerCase()
 
-  for (const part of parts) {
-    const lower = part.toLowerCase()
-
-    if (lower.startsWith('tests done:') || lower.startsWith('tests:')) {
-      const val = part.split(':').slice(1).join(':').trim()
-      out.testsText = val
-      out.testsArray = val
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    } else if (lower.startsWith('visit type:')) {
-      const val = part.split(':').slice(1).join(':').trim()
-      out.visitType = val
-    } else if (lower.startsWith('precautions:')) {
-      const val = part.split(':').slice(1).join(':').trim()
-      out.precautionsRaw = val
+      if (!testsText && (lower.startsWith('tests done:') || lower.startsWith('tests:'))) {
+        const val = part.split(':').slice(1).join(':').trim()
+        testsText = val
+        testsArray = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      } else if (!visitType && lower.startsWith('visit type:')) {
+        const val = part.split(':').slice(1).join(':').trim()
+        visitType = val
+      } else if (!precautionsRaw && lower.startsWith('precautions:')) {
+        const val = part.split(':').slice(1).join(':').trim()
+        precautionsRaw = val
+      }
     }
   }
 
-  return out
+  return {
+    testsText,
+    testsArray,
+    visitType,
+    precautionsRaw,
+  }
 }
 
 const prettyVisitType = (vt) => {
@@ -509,65 +568,77 @@ const prettyVisitType = (vt) => {
 const precautionsArray = (item) => {
   const raw = parsedNotes(item).precautionsRaw
   if (!raw) return []
-  // split by '.' or ';' into short points
   return raw
-    .split(/[.;]/)
+    .split(/[.;\n]/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
 }
 
 /* ------------ Parse prescription (medicines & pattern) ------------ */
-/**
- * Example prescription from seed:
- * "DOLO650-1-1-1 | AZITH500-1-0-0"
- *
- * We map to:
- *   name: "DOLO650"
- *   pattern: "1-1-1"
- *   morning/afternoon/night/bedtime: counts as numbers (0/1/2)
- */
 const parsedMedicines = (treatment) => {
   const prescription = (treatment && treatment.prescription) || ''
   if (!prescription || typeof prescription !== 'string') return []
 
-  const chunks = prescription.split('|').map((c) => c.trim()).filter(Boolean)
   const meds = []
-  const patternRegex = /(\d(?:-\d){1,3})$/
 
-  for (const chunk of chunks) {
-    const match = chunk.match(patternRegex)
-    let name = chunk
-    let pattern = ''
+  if (prescription.includes('\n')) {
+    // New line-based format
+    const lines = prescription.split('\n').map((l) => l.trim()).filter(Boolean)
+    for (const line of lines) {
+      const parts = line.split('|').map((p) => p.trim())
+      const name = parts[0] || 'Medicine'
+      const pattern = parts[1] || ''
+      const extra = parts[2] || ''
 
-    if (match) {
-      pattern = match[1]
-      name = chunk.slice(0, chunk.lastIndexOf(pattern)).replace(/[-–]+$/, '').trim()
+      const { morning, afternoon, night } = decodePatternCounts(pattern)
+      meds.push({
+        name,
+        pattern: pattern || '—',
+        extra,
+        morning,
+        afternoon,
+        night,
+      })
     }
+  } else {
+    // Old pipe-separated format
+    const chunks = prescription.split('|').map((c) => c.trim()).filter(Boolean)
+    const patternRegex = /(\d(?:-\d){1,2})$/ // e.g. 1-0-1 or 1-1
 
-    if (!name && !pattern) continue
+    for (const chunk of chunks) {
+      const match = chunk.match(patternRegex)
+      let name = chunk
+      let pattern = ''
 
-    const { morning, afternoon, night, bedtime } = decodePatternCounts(pattern)
+      if (match) {
+        pattern = match[1]
+        name = chunk.slice(0, chunk.lastIndexOf(pattern)).replace(/[-–]+$/, '').trim()
+      }
 
-    meds.push({
-      name: name || 'Medicine',
-      pattern: pattern || '—',
-      morning,
-      afternoon,
-      night,
-      bedtime,
-    })
+      if (!name && !pattern) continue
+
+      const { morning, afternoon, night } = decodePatternCounts(pattern)
+      meds.push({
+        name: name || 'Medicine',
+        pattern: pattern || '—',
+        extra: '',
+        morning,
+        afternoon,
+        night,
+      })
+    }
   }
 
   return meds
 }
 
-/* Decode "1-0-1-0" → counts per time slot */
+/* Decode "1-0-1" → counts per time slot (Morn / Noon / Night) */
 const decodePatternCounts = (pattern) => {
   const parts = (pattern || '').split('-').map((p) => p.trim())
-  const safe = [0, 0, 0, 0]
+  const safe = [0, 0, 0] // morning, afternoon, night
 
   parts.forEach((val, idx) => {
-    if (idx > 3) return
+    if (idx > 2) return
     const num = parseInt(val, 10)
     if (!isNaN(num) && num > 0) {
       safe[idx] = num
@@ -578,7 +649,6 @@ const decodePatternCounts = (pattern) => {
     morning: safe[0],
     afternoon: safe[1],
     night: safe[2],
-    bedtime: safe[3],
   }
 }
 
@@ -608,6 +678,201 @@ const toggleExpanded = (id) => {
   if (set.has(id)) set.delete(id)
   else set.add(id)
   expandedIds.value = set
+}
+
+/* ------------ EXPORT HELPERS (CSV & PDF) ------------ */
+
+// Flatten one history item into a simple object for export (used by PDF)
+const buildExportRow = (item) => {
+  const notes = parsedNotes(item)
+  const t = item.treatment || {}
+  const meds = parsedMedicines(t)
+
+  const medsText = meds
+    .map((m) => {
+      const parts = [m.name]
+      if (m.pattern && m.pattern !== '—') parts.push(`Pattern: ${m.pattern}`)
+      if (m.extra) parts.push(`Duration: ${m.extra}`)
+      return parts.filter(Boolean).join(' / ')
+    })
+    .join('; ')
+
+  const precautionsText = precautionsArray(item).join('; ')
+
+  return {
+    Date: formatDate(item.appointment_date),
+    Time: item.time_slot || '',
+    Doctor: item.doctor_name ? `Dr. ${item.doctor_name}` : 'Doctor',
+    Specialization: item.doctor_specialization || '',
+    Reason: item.reason || '',
+    Status: prettyStatus(item.status),
+    Diagnosis: t.diagnosis || '',
+    'Visit type': prettyVisitType(notes.visitType),
+    Tests: notes.testsText || '',
+    'Follow-up date': t.follow_up_date ? formatDate(t.follow_up_date) : '',
+    Medicines: medsText || (t.prescription || ''),
+    Precautions: precautionsText,
+    'Advice / Notes': t.notes || '',
+  }
+}
+
+/* Download CSV: trigger Celery + get direct download */
+const exportToCsv = async () => {
+  const list = filteredHistory.value || []
+  if (!list.length) return
+
+  exportingCsv.value = true
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  try {
+    // 1) Fire-and-forget Celery export (server copy into exports/)
+    try {
+      await api.post('/patient/export-history')
+    } catch (err) {
+      // Don’t block download if Celery fails;
+      // just log it and continue.
+      console.warn('Failed to trigger async export-history', err)
+    }
+
+    // 2) Sync CSV download for browser
+    const res = await api.get('/patient/history/export-csv', {
+      responseType: 'blob',
+    })
+
+    const blob = new Blob([res.data], {
+      type: 'text/csv;charset=utf-8;',
+    })
+
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', 'visit_history.csv')
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    successMessage.value =
+      'visit_history.csv downloaded and a backup export is being generated on the server.'
+  } catch (err) {
+    console.error(err)
+    errorMessage.value =
+      err?.response?.data?.message || 'Failed to export CSV.'
+  } finally {
+    exportingCsv.value = false
+  }
+}
+
+/* Download PDF of current filtered history - detailed per-visit sheet */
+const exportToPdf = () => {
+  const list = filteredHistory.value || []
+  if (!list.length) return
+
+  const doc = new jsPDF({
+    orientation: 'p',
+    unit: 'mm',
+    format: 'a4',
+  })
+
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const marginX = 12
+  let currentY = 16
+
+  // Title
+  doc.setFontSize(16)
+  doc.text('Visit History', marginX, currentY)
+  doc.setFontSize(9)
+  currentY += 6
+  doc.text(`Total visits: ${list.length}`, marginX, currentY)
+  currentY += 4
+
+  list.forEach((item, index) => {
+    const row = buildExportRow(item)
+
+    // Add page if we are too low
+    if (currentY > pageHeight - 40) {
+      doc.addPage()
+      currentY = 16
+      doc.setFontSize(14)
+      doc.text('Visit History (contd.)', marginX, currentY)
+      doc.setFontSize(9)
+      currentY += 6
+    }
+
+    // Header band for this visit
+    doc.setFillColor(248, 250, 252) // light grey
+    doc.setDrawColor(229, 231, 235)
+    const headerHeight = 9
+    doc.roundedRect(
+      marginX - 2,
+      currentY - 4,
+      pageWidth - 2 * marginX + 4,
+      headerHeight,
+      1.5,
+      1.5,
+      'FD'
+    )
+
+    doc.setFontSize(11)
+    doc.setTextColor(31, 41, 55)
+
+    const visitLabel = `Visit ${index + 1}: ${row.Date || '-'} • ${row.Time || '-'}`
+    const doctorLabel = row.Doctor || ''
+    const statusLabel = row.Status ? `Status: ${row.Status}` : ''
+
+    doc.text(visitLabel, marginX, currentY + 1.5)
+    if (doctorLabel) {
+      doc.setFontSize(9)
+      doc.text(doctorLabel, marginX, currentY + 5)
+    }
+    if (statusLabel) {
+      doc.setFontSize(8)
+      const statusX = pageWidth - marginX - doc.getTextWidth(statusLabel)
+      doc.text(statusLabel, statusX, currentY + 5)
+    }
+
+    currentY += headerHeight + 2
+    doc.setFontSize(8)
+    doc.setTextColor(55, 65, 81)
+
+    const detailRows = [
+      ['Reason for visit', row.Reason],
+      ['Diagnosis', row.Diagnosis],
+      ['Visit type', row['Visit type']],
+      ['Tests', row.Tests],
+      ['Medicines', row.Medicines],
+      ['Precautions', row.Precautions],
+      ['Advice / Notes', row['Advice / Notes']],
+      ['Follow-up date', row['Follow-up date']],
+    ]
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: marginX, right: marginX },
+      head: [['Field', 'Details']],
+      body: detailRows,
+      styles: {
+        fontSize: 8,
+        cellPadding: 2,
+        valign: 'top',
+      },
+      headStyles: {
+        fillColor: [241, 245, 249],
+        textColor: 15,
+        fontStyle: 'bold',
+      },
+      columnStyles: {
+        0: { cellWidth: 35 }, // Field
+        1: { cellWidth: pageWidth - marginX * 2 - 35 }, // Details
+      },
+    })
+
+    currentY = doc.lastAutoTable.finalY + 8
+  })
+
+  doc.save('visit-history.pdf')
 }
 
 onMounted(() => {
@@ -651,6 +916,10 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #6b7280;
+}
+
+.export-actions {
+  gap: 0.4rem;
 }
 
 /* Filter pills */
@@ -742,9 +1011,6 @@ onMounted(() => {
 }
 .dose-dot.night {
   background: #3b82f6;
-}
-.dose-dot.bed {
-  background: #6366f1;
 }
 .muted-dot {
   color: #9ca3af;

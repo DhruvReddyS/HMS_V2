@@ -3,7 +3,7 @@ import { authStore } from '../store/authStore'
 
 // Public views
 import LandingPage from '../views/LandingPage.vue'
-import LoginView from '../views/LoginView.vue'       // ✅ correct file name
+import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
 
 // Admin views
@@ -15,6 +15,9 @@ import AdminAppointmentDetails from '../views/admin/AdminAppointmentDetails.vue'
 
 // Doctor views
 import DoctorDashboard from '../views/doctor/DoctorDashboard.vue'
+import DoctorAppointments from '../views/doctor/DoctorAppointments.vue'
+import DoctorPatientHistory from '../views/doctor/DoctorPatientHistory.vue'
+import DoctorAvailability from '../views/doctor/DoctorAvailability.vue'
 
 // Patient views
 import PatientDashboard from '../views/patient/PatientDashboard.vue'
@@ -45,6 +48,21 @@ const routes = [
 
   // ---------- Doctor ----------
   { path: '/doctor/dashboard', name: 'DoctorDashboard', component: DoctorDashboard },
+  {
+    path: '/doctor/appointments',
+    name: 'DoctorAppointments',
+    component: DoctorAppointments
+  },
+  {
+    path: '/doctor/patient-history',
+    name: 'DoctorPatientHistory',
+    component: DoctorPatientHistory
+  },
+  {
+    path: '/doctor/availability',
+    name: 'DoctorAvailability',
+    component: DoctorAvailability
+  },
 
   // ---------- Patient ----------
   { path: '/patient/dashboard', name: 'PatientDashboard', component: PatientDashboard },
@@ -60,10 +78,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes
 })
-
-// ❌ REMOVE the old localStorage restore lines completely:
-// authStore.role  = localStorage.getItem("role")
-// authStore.token = localStorage.getItem("accessToken")
 
 // ------------------------------
 // 🔐 Route Guards

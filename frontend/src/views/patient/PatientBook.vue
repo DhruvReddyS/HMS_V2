@@ -207,7 +207,8 @@
           </div>
 
           <p class="small text-muted mb-2" v-if="!isPrefilled">
-            Green slots are available, red ones are already booked.
+            Green slots are available. Red slots are already booked or the doctor is
+            not available in that time.
           </p>
 
           <!-- PREFILLED MODE -->
@@ -219,7 +220,7 @@
             <strong>{{ prefillTime }}</strong> on
             <strong>{{ selectedDate }}</strong>.
             This slot will be booked if it is still available. If someone else
-            has taken it in the meantime, you’ll see a conflict message.
+            has taken it or the doctor is not available anymore, you’ll see a conflict message.
           </div>
 
           <!-- NORMAL MODE: grid -->
@@ -244,7 +245,8 @@
                 v-if="!loadingSlots && slots.length === 0"
                 class="alert alert-info py-2 small mb-2"
               >
-                No slots available for the selected date. Please try another date.
+                No slots available for the selected date. The doctor may be on leave
+                or fully booked. Please try another date.
               </div>
 
               <div v-if="slots.length" class="slots-grid">
@@ -263,7 +265,7 @@
 
               <div v-if="slots.length" class="slot-legend small text-muted mt-2">
                 <span class="legend-dot legend-free"></span> Available
-                <span class="legend-dot legend-booked ms-3"></span> Booked
+                <span class="legend-dot legend-booked ms-3"></span> Booked / Not available
                 <span class="legend-dot legend-selected ms-3"></span> Selected
               </div>
             </div>
@@ -512,13 +514,17 @@ const prefilledDoctorName = computed(() => {
   return doc?.full_name || ''
 })
 
-/* Clear slots on doctor/date change (only when not prefilled) */
+/* Clear + auto-load slots on doctor/date change (only when not prefilled) */
 watch(
   [selectedDoctorId, selectedDate],
-  () => {
+  async ([docId, dateVal]) => {
     if (isPrefilled.value) return
     slots.value = []
     selectedSlot.value = ''
+
+    if (docId && dateVal) {
+      await loadSlots()
+    }
   }
 )
 
@@ -553,12 +559,16 @@ const loadSlots = async () => {
     // [{ time: "10:00", status: "free" | "booked" }]
     slots.value = res.data?.slots || res.data || []
 
+    // In prefill flow, re-check that the chosen time is still free
     if (prefillTime.value) {
       const found = slots.value.find(
         (s) => s.time === prefillTime.value && s.status === 'free'
       )
       if (found) {
         selectedSlot.value = prefillTime.value
+      } else {
+        // optional: clear selected slot if it's no longer free
+        selectedSlot.value = ''
       }
     }
   } catch (err) {

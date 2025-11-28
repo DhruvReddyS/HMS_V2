@@ -40,7 +40,7 @@
               </span>
               <input
                 v-model="search"
-                placeholder="Search by id, name, username, email, phone, gender, status..."
+                placeholder="Search by id, name, username, email, phone, gender, age, status..."
                 class="form-control"
               />
             </div>
@@ -271,12 +271,12 @@
               />
             </div>
 
-            <div class="col-md-2">
-              <label class="form-label small">Age</label>
+            <!-- DOB instead of Age -->
+            <div class="col-md-3">
+              <label class="form-label small">Date of Birth</label>
               <input
-                v-model.number="form.age"
-                type="number"
-                min="0"
+                v-model="form.dob"
+                type="date"
                 class="form-control form-control-sm"
               />
             </div>
@@ -294,7 +294,7 @@
               </select>
             </div>
 
-            <div v-if="!editMode" class="col-md-4">
+            <div v-if="!editMode" class="col-md-3">
               <label class="form-label small">Password</label>
               <input
                 v-model="form.password"
@@ -462,7 +462,7 @@ const form = ref({
   username: '',
   email: '',
   phone: '',
-  age: null,
+  dob: '',
   gender: '',
   password: '',
 })
@@ -549,7 +549,7 @@ const startCreate = async () => {
     username: '',
     email: '',
     phone: '',
-    age: null,
+    dob: '',
     gender: '',
     password: '',
   }
@@ -565,7 +565,8 @@ const startEdit = async (p) => {
     username: p.username,
     email: p.email,
     phone: p.phone,
-    age: p.age,
+    // ensure proper format for <input type="date">
+    dob: p.dob ? String(p.dob).substring(0, 10) : '',
     gender: p.gender,
     password: '',
   }
@@ -594,8 +595,8 @@ const submitForm = async () => {
         full_name: form.value.full_name,
         email: form.value.email,
         phone: form.value.phone,
-        age: form.value.age,
         gender: form.value.gender,
+        dob: form.value.dob || null,
       })
     } else {
       await api.post('/admin/patients', {
@@ -603,8 +604,8 @@ const submitForm = async () => {
         username: form.value.username,
         email: form.value.email,
         phone: form.value.phone,
-        age: form.value.age,
         gender: form.value.gender,
+        dob: form.value.dob || null,
         password: form.value.password || 'patient123',
       })
     }
