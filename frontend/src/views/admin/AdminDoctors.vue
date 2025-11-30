@@ -157,7 +157,6 @@
 
                 <td class="text-end">
                   <div class="btn-actions d-flex justify-content-end gap-2 flex-wrap">
-
                     <button class="action-btn neutral" @click="startEdit(doc)">
                       <i class="bi bi-pencil-square"></i>
                       Edit
@@ -181,6 +180,13 @@
                       Activate
                     </button>
 
+                    <button
+                      class="action-btn danger"
+                      @click="openDeleteModal(doc)"
+                    >
+                      <i class="bi bi-trash3-fill"></i>
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -404,6 +410,54 @@
       </div>
     </div>
 
+    <!-- =================== CONFIRM POPUP: HARD DELETE =================== -->
+    <div v-if="showDeleteModal" class="confirm-overlay">
+      <div class="confirm-box shadow-lg">
+        <div class="d-flex gap-3">
+          <div class="confirm-icon danger-icon">
+            <i class="bi bi-trash3-fill"></i>
+          </div>
+
+          <div>
+            <h6 class="fw-bold mb-1">
+              Delete doctor {{ deleteDoctor?.full_name || '' }}?
+            </h6>
+            <p class="small text-muted mb-0">
+              This will permanently remove this doctor and all related data.
+              This action cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2 mt-3">
+          <button
+            class="btn btn-light btn-sm rounded-pill"
+            type="button"
+            @click="closeDeleteModal"
+            :disabled="deleting"
+          >
+            Cancel
+          </button>
+
+          <button
+            class="btn btn-danger btn-sm rounded-pill"
+            type="button"
+            @click="confirmDelete"
+            :disabled="deleting"
+          >
+            <span v-if="!deleting">
+              <i class="bi bi-trash3-fill me-1"></i>
+              Delete
+            </span>
+            <span v-else>
+              <span class="spinner-border spinner-border-sm me-1"></span>
+              Deleting...
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -416,8 +470,8 @@ const search = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 
-const filterStatus = ref('all') // all | active | inactive
-const sortBy = ref('name')      // name | experience
+const filterStatus = ref('all')
+const sortBy = ref('name')
 
 const showForm = ref(false)
 const editMode = ref(false)
@@ -425,10 +479,14 @@ const saving = ref(false)
 
 const showConfirmModal = ref(false)
 const confirmDoctor = ref(null)
-const confirmAction = ref('') // activate | deactivate
+const confirmAction = ref('')
 const confirming = ref(false)
 
-const showFormConfirmModal = ref(false) // popup before saving edits
+const showFormConfirmModal = ref(false)
+
+const showDeleteModal = ref(false)
+const deleteDoctor = ref(null)
+const deleting = ref(false)
 
 const formSectionRef = ref(null)
 
@@ -442,7 +500,6 @@ const form = ref({
   password: '',
 })
 
-/* -------- Scroll to form when opening ---------- */
 const scrollToForm = async () => {
   await nextTick()
   if (formSectionRef.value) {
@@ -453,7 +510,6 @@ const scrollToForm = async () => {
   }
 }
 
-/* -------- Fetch doctors from backend ---------- */
 const fetchDoctors = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -474,18 +530,15 @@ const reload = () => {
   fetchDoctors()
 }
 
-/* -------- Filter + Search + Sort (client-side) ---------- */
 const filteredDoctors = computed(() => {
   let list = doctors.value
 
-  // status filter
   if (filterStatus.value === 'active') {
     list = list.filter((d) => d.is_active)
   } else if (filterStatus.value === 'inactive') {
     list = list.filter((d) => !d.is_active)
   }
 
-  // search across key fields
   if (search.value.trim()) {
     const q = search.value.trim().toLowerCase()
     list = list.filter((d) => {
@@ -502,7 +555,6 @@ const filteredDoctors = computed(() => {
     })
   }
 
-  // sorting
   const copy = [...list]
   if (sortBy.value === 'name') {
     copy.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
@@ -517,7 +569,6 @@ const setFilterStatus = (status) => {
   filterStatus.value = status
 }
 
-/* -------- Create / Edit ---------- */
 const startCreate = async () => {
   editMode.value = false
   showForm.value = true
@@ -553,13 +604,10 @@ const cancelForm = () => {
   showFormConfirmModal.value = false
 }
 
-/* -------- Handle form submit (with confirm for edit) ---------- */
 const onFormSubmit = () => {
   if (editMode.value) {
-    // ask confirmation before saving edits
     showFormConfirmModal.value = true
   } else {
-    // direct save for create
     submitForm()
   }
 }
@@ -597,7 +645,6 @@ const submitForm = async () => {
   }
 }
 
-/* -------- Activate / Deactivate ---------- */
 const openConfirmToggle = (doc) => {
   confirmDoctor.value = doc
   confirmAction.value = doc.is_active ? 'deactivate' : 'activate'
@@ -617,14 +664,9 @@ const confirmToggle = async () => {
   const action = confirmAction.value
 
   try {
-    if (action === 'deactivate') {
-      // soft delete
-      await api.delete(`/admin/doctors/${doc.id}`)
-    } else {
-      await api.put(`/admin/doctors/${doc.id}`, {
-        is_active: true,
-      })
-    }
+    await api.put(`/admin/doctors/${doc.id}`, {
+      is_active: action === 'activate',
+    })
     await fetchDoctors()
     closeConfirmModal()
   } catch (err) {
@@ -632,6 +674,31 @@ const confirmToggle = async () => {
       err?.response?.data?.message || `Failed to ${action} doctor.`
   } finally {
     confirming.value = false
+  }
+}
+
+const openDeleteModal = (doc) => {
+  deleteDoctor.value = doc
+  showDeleteModal.value = true
+}
+
+const closeDeleteModal = () => {
+  showDeleteModal.value = false
+  deleteDoctor.value = null
+}
+
+const confirmDelete = async () => {
+  if (!deleteDoctor.value) return
+  deleting.value = true
+  try {
+    await api.delete(`/admin/doctors/${deleteDoctor.value.id}`)
+    await fetchDoctors()
+    closeDeleteModal()
+  } catch (err) {
+    errorMessage.value =
+      err?.response?.data?.message || 'Failed to delete doctor.'
+  } finally {
+    deleting.value = false
   }
 }
 

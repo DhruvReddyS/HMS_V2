@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monthly Activity Report – Dr. {{ doctor_name }}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      color: #1f2933;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .wrapper {
+      width: 100%;
+      background-color: #f4f6f8;
+      padding: 20px 0;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+      overflow: hidden;
+      border: 1px solid #e5e9f0;
+    }
+
+    .header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid #edf1f5;
+      background: linear-gradient(120deg, #0f766e 0%, #22c55e 50%, #06b6d4 100%);
+      color: #f9fafb;
+    }
+
+    .header-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 4px 0;
+    }
+
+    .header-subtitle {
+      font-size: 13px;
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .period-pill {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(226, 232, 240, 0.6);
+      background-color: rgba(15, 23, 42, 0.15);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .content {
+      padding: 20px 24px 24px;
+    }
+
+    .greeting {
+      margin: 0 0 10px 0;
+      font-weight: 500;
+    }
+
+    .intro {
+      margin: 0 0 16px 0;
+      color: #4b5563;
+      font-size: 14px;
+    }
+
+    .summary-box {
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      background-color: #f9fafb;
+      padding: 10px 12px;
+      margin-bottom: 18px;
+      font-size: 13px;
+    }
+
+    .summary-box strong {
+      color: #111827;
+    }
+
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      background-color: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 700px;
+      font-size: 13px;
+    }
+
+    thead tr {
+      background-color: #f3f4f6;
+    }
+
+    th,
+    td {
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    th {
+      font-weight: 600;
+      color: #111827;
+      border-bottom: 1px solid #d1d5db;
+      white-space: nowrap;
+    }
+
+    tbody tr:nth-child(even) {
+      background-color: #f9fafb;
+    }
+
+    .col-date {
+      width: 90px;
+      white-space: nowrap;
+    }
+
+    .col-time {
+      width: 60px;
+      white-space: nowrap;
+    }
+
+    .col-patient {
+      width: 130px;
+      white-space: nowrap;
+    }
+
+    .col-diagnosis {
+      width: 160px;
+    }
+
+    .col-prescription {
+      width: 200px;
+    }
+
+    .col-notes {
+      width: 180px;
+    }
+
+    .prescription-text,
+    .notes-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .footer {
+      padding: 18px 24px 20px;
+      border-top: 1px solid #edf1f5;
+      background-color: #f9fafb;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .footer strong {
+      color: #111827;
+    }
+
+    .footer-note {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    /* Mobile tweaks */
+    @media (max-width: 600px) {
+      .container {
+        border-radius: 0;
+      }
+
+      .header,
+      .content,
+      .footer {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .header-title {
+        font-size: 18px;
+      }
+
+      .header-subtitle {
+        font-size: 12px;
+      }
+
+      .summary-box {
+        font-size: 12px;
+      }
+
+      table {
+        min-width: 600px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrapper">
+    <div class="container">
+      <!-- HEADER -->
+      <div class="header">
+        <div class="header-title">
+          Monthly Activity Report – Dr. {{ doctor_name }}
+        </div>
+        <p class="header-subtitle">
+          Summary of your completed consultations for the last month.
+        </p>
+        <div class="period-pill">
+          Period:
+          <strong>{{ start_date.strftime('%d %b %Y') }}</strong>
+          &nbsp;–&nbsp;
+          <strong>{{ end_date.strftime('%d %b %Y') }}</strong>
+        </div>
+      </div>
+
+      <!-- CONTENT -->
+      <div class="content">
+        <p class="greeting">Dear Dr. {{ doctor_name }},</p>
+
+        <p class="intro">
+          Below is an overview of all <strong>completed appointments</strong> during the
+          above period, along with the recorded diagnosis, prescriptions and clinical notes.
+          This summary is intended to help you quickly review your monthly clinical activity.
+        </p>
+
+        <div class="summary-box">
+          <strong>Total completed appointments:</strong> {{ rows|length }}<br />
+          <span style="color: #6b7280;">
+            (Only appointments marked as <strong>COMPLETED</strong> are included in this report.)
+          </span>
+        </div>
+
+        <div class="table-wrapper">
+          <table cellspacing="0" cellpadding="0" role="presentation">
+            <thead>
+              <tr>
+                <th class="col-date">Date</th>
+                <th class="col-time">Time</th>
+                <th class="col-patient">Patient</th>
+                <th class="col-diagnosis">Diagnosis</th>
+                <th class="col-prescription">Prescription</th>
+                <th class="col-notes">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+              <tr>
+                <td class="col-date">
+                  {{ row.date.strftime('%d %b %Y') }}
+                </td>
+                <td class="col-time">
+                  {{ row.time or '-' }}
+                </td>
+                <td class="col-patient">
+                  {{ row.patient_name }}
+                </td>
+                <td class="col-diagnosis">
+                  {{ row.diagnosis or '-' }}
+                </td>
+                <td class="col-prescription">
+                  <div class="prescription-text">
+                    {{ row.prescription or '-' }}
+                  </div>
+                </td>
+                <td class="col-notes">
+                  <div class="notes-text">
+                    {{ row.notes or '-' }}
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <p style="margin-top: 18px; font-size: 13px; color: #4b5563;">
+          If you notice any discrepancies or would like to export this data in another format,
+          please contact the hospital administration or the IT support team.
+        </p>
+
+        <p style="margin-top: 12px;">
+          Warm regards,<br />
+          <strong>Hospital Management System</strong>
+        </p>
+      </div>
+
+      <!-- FOOTER -->
+      <div class="footer">
+        This is an automated summary generated by the Hospital Management System for your
+        reference and internal use.
+        <div class="footer-note">
+          Please do not reply directly to this email. If you need assistance, reach out to the
+          hospital administrator or technical support.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

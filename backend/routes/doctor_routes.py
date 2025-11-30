@@ -1,13 +1,23 @@
-# routes/doctor_routes.py
-
 from datetime import datetime, date, timedelta
-
-from flask import request, jsonify
+from calendar import monthrange
+import csv
+from flask import request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from sqlalchemy import or_
+import io
+from io import BytesIO
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
-from cache_utils import cached, cache_delete_pattern  # ✅ caching helpers
-
+from cache_utils import cached, cache_delete_pattern
 from models import (
     db,
     User,
@@ -18,9 +28,7 @@ from models import (
     DoctorAvailability,
 )
 
-# -----------------------------
-# Helpers & shared constants
-# -----------------------------
+
 def _today() -> date:
     return date.today()
 
@@ -40,10 +48,6 @@ def _parse_date_param(name, default_today: bool = True) -> date | None:
 
 
 def _require_doctor_role():
-    """
-    Check JWT 'role' == 'doctor'.
-    Returns (ok, resp, status). If not ok, return resp,status from view.
-    """
     claims = get_jwt()
     role = claims.get("role")
     if role != "doctor":
@@ -52,28 +56,44 @@ def _require_doctor_role():
 
 
 def _get_doctor_id() -> int:
-    """Convenience helper to get current doctor's user id as int."""
     return int(get_jwt_identity())
 
 
-# Global slot grid used by doctor availability (and by patient-side logic)
-# 1–2 PM lunch break is simply not in this list
 DEFAULT_TIME_SLOTS = [
     "09:00", "09:30",
     "10:00", "10:30",
     "11:00", "11:30",
     "12:00", "12:30",
-    # 13:00–14:00 → lunch break
     "14:00", "14:30",
     "15:00", "15:30",
     "16:00", "16:30",
 ]
 
 
-# =============================
-# 1. Dashboard summary
-# GET /api/doctor/dashboard-summary
-# =============================
+def _calc_age(dob) -> int | None:
+    if not dob:
+        return None
+
+    if isinstance(dob, str):
+        try:
+            dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    elif isinstance(dob, date):
+        dob_date = dob
+    else:
+        try:
+            dob_date = dob.date()
+        except Exception:
+            return None
+
+    today = _today()
+    years = today.year - dob_date.year
+    if (today.month, today.day) < (dob_date.month, dob_date.day):
+        years -= 1
+    return years
+
+
 @jwt_required()
 @cached(prefix="doctor_dashboard", ttl=60)
 def doctor_dashboard_summary():
@@ -88,13 +108,11 @@ def doctor_dashboard_summary():
     today = _today()
     today_str = today.isoformat()
 
-    # Week range (for stats) – ISO strings
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
     week_start_str = week_start.isoformat()
     week_end_str = week_end.isoformat()
 
-    # Today's appointments
     todays_appts = (
         Appointment.query
         .filter(
@@ -105,13 +123,11 @@ def doctor_dashboard_summary():
         .all()
     )
 
-    # Stats for today
     today_total = len(todays_appts)
     today_booked = sum(1 for a in todays_appts if (a.status or "").upper() == "BOOKED")
     today_completed = sum(1 for a in todays_appts if (a.status or "").upper() == "COMPLETED")
     pending_visits = today_booked
 
-    # Weekly completed visits
     week_completed = (
         Appointment.query
         .filter(
@@ -122,7 +138,6 @@ def doctor_dashboard_summary():
         .count()
     )
 
-    # Recent / assigned patients (last 50 appts)
     recent_appts = (
         Appointment.query
         .filter(Appointment.doctor_id == user_id)
@@ -139,9 +154,6 @@ def doctor_dashboard_summary():
         if pid not in last_visits or appt.date > last_visits[pid]:
             last_visits[pid] = appt.date
 
-    # Collect patient ids from:
-    #  - recent appts (for "assigned patients" section)
-    #  - today's appts (for "upcoming appointments" names)
     patient_ids = set(last_visits.keys())
     patient_ids.update(a.patient_id for a in todays_appts if a.patient_id)
 
@@ -168,7 +180,6 @@ def doctor_dashboard_summary():
         reverse=True,
     )[:10]
 
-    # --- has_treatment for today's appointments ---
     todays_ids = [a.id for a in todays_appts]
     treated_ids = set()
     if todays_ids:
@@ -177,7 +188,6 @@ def doctor_dashboard_summary():
         ).all()
         treated_ids = {t.appointment_id for t in treat_rows}
 
-    # Build today's upcoming appointments payload
     upcoming_appointments = []
     for a in todays_appts:
         p = patient_by_id.get(a.patient_id) if a.patient_id else None
@@ -206,7 +216,6 @@ def doctor_dashboard_summary():
         "specialization": getattr(doctor_profile, "specialization", None),
     }
 
-    # Return dict so @cached can store + jsonify
     return {
         "today": today_str,
         "doctor": doctor_payload,
@@ -223,10 +232,6 @@ def doctor_dashboard_summary():
     }
 
 
-# =============================
-# 2. List / filter appointments
-# GET /api/doctor/appointments
-# =============================
 @jwt_required()
 @cached(prefix="doctor_appointments", ttl=30)
 def doctor_list_appointments():
@@ -295,14 +300,9 @@ def doctor_list_appointments():
             "has_treatment": a.id in treated_ids,
         }
 
-    # Return dict so @cached can store + jsonify
     return {"appointments": [_to_dict(a) for a in appts]}
 
 
-# =============================
-# 3. Update appointment status
-# POST /api/doctor/appointments/<int:appointment_id>/status
-# =============================
 @jwt_required()
 def doctor_update_appointment_status(appointment_id):
     ok, resp, status = _require_doctor_role()
@@ -331,12 +331,14 @@ def doctor_update_appointment_status(appointment_id):
     appt.status = new_status
     db.session.commit()
 
-    # 🔥 Invalidate caches impacted by this change
     cache_delete_pattern("API:doctor_dashboard:*")
     cache_delete_pattern("API:doctor_appointments:*")
     cache_delete_pattern("API:doctor_patient_history:*")
-    cache_delete_pattern("API:admin_stats:*")
+    cache_delete_pattern("API:doctor_stats:*")
+    cache_delete_pattern("API:doctor_my_patients:*")
+    cache_delete_pattern("API:admin_stats_v2:*")
     cache_delete_pattern("API:admin_appointments:*")
+    cache_delete_pattern("API:admin_reports_analytics:*")
     cache_delete_pattern("API:patient_appointments:*")
     cache_delete_pattern("API:patient_history:*")
     cache_delete_pattern("API:patient_slots:*")
@@ -344,10 +346,6 @@ def doctor_update_appointment_status(appointment_id):
     return jsonify({"message": "Status updated successfully.", "status": new_status})
 
 
-# =============================
-# 4. Save treatment
-# POST /api/doctor/appointments/<int:appointment_id>/treatment
-# =============================
 @jwt_required()
 def doctor_save_treatment(appointment_id):
     ok, resp, status = _require_doctor_role()
@@ -394,23 +392,21 @@ def doctor_save_treatment(appointment_id):
 
     db.session.commit()
 
-    # 🔥 Invalidate caches: treatment affects stats, history, flags
     cache_delete_pattern("API:doctor_dashboard:*")
     cache_delete_pattern("API:doctor_appointments:*")
     cache_delete_pattern("API:doctor_patient_history:*")
     cache_delete_pattern("API:doctor_treatment:*")
+    cache_delete_pattern("API:doctor_stats:*")
+    cache_delete_pattern("API:doctor_my_patients:*")
+    cache_delete_pattern("API:admin_stats_v2:*")
+    cache_delete_pattern("API:admin_appointments:*")
+    cache_delete_pattern("API:admin_reports_analytics:*")
     cache_delete_pattern("API:patient_appointments:*")
     cache_delete_pattern("API:patient_history:*")
-    cache_delete_pattern("API:admin_stats:*")
-    cache_delete_pattern("API:admin_appointments:*")
 
     return jsonify({"message": "Treatment details saved successfully."})
 
 
-# =============================
-# 4b. Get treatment
-# GET /api/doctor/appointments/<int:appointment_id>/treatment
-# =============================
 @jwt_required()
 @cached(prefix="doctor_treatment", ttl=120)
 def doctor_get_treatment(appointment_id):
@@ -426,7 +422,7 @@ def doctor_get_treatment(appointment_id):
 
     t = Treatment.query.filter_by(appointment_id=appt.id).first()
     if not t:
-        return {"exists": False, "treatment": None}, 200
+        return {"exists": False, "treatment": None}
 
     treatment_payload = {
         "id": t.id,
@@ -439,13 +435,9 @@ def doctor_get_treatment(appointment_id):
         "follow_up_date": t.follow_up_date,
     }
 
-    return {"exists": True, "treatment": treatment_payload}, 200
+    return {"exists": True, "treatment": treatment_payload}
 
 
-# =============================
-# 5. Patient history (for THIS doctor)
-# GET /api/doctor/patient-history
-# =============================
 @jwt_required()
 @cached(prefix="doctor_patient_history", ttl=60)
 def doctor_patient_history():
@@ -526,21 +518,12 @@ def doctor_patient_history():
         "blood_group": patient.blood_group,
     }
 
-    # Return dict for caching
     return {"patient": patient_payload, "visits": visits}
 
-
-# =============================
-# 6. Availability – grid + bulk + toggle
-# =============================
 
 @jwt_required()
 @cached(prefix="doctor_availability", ttl=60)
 def doctor_availability():
-    """
-    GET /api/doctor/availability?start_date=YYYY-MM-DD
-    → return 7-day availability grid with bookings info.
-    """
     ok, resp, status = _require_doctor_role()
     if not ok:
         return resp, status
@@ -552,14 +535,12 @@ def doctor_availability():
     start_str = start_date.isoformat()
     end_str = end_date.isoformat()
 
-    # 1) Doctor availability overrides
     av_rows = DoctorAvailability.query.filter(
         DoctorAvailability.doctor_id == user_id,
         DoctorAvailability.date.between(start_str, end_str),
     ).all()
     av_map = {(row.date, row.time_slot): row.is_available for row in av_rows}
 
-    # 2) Appointments (BOOKED/COMPLETED block the slot)
     appts = Appointment.query.filter(
         Appointment.doctor_id == user_id,
         Appointment.date.between(start_str, end_str),
@@ -574,8 +555,8 @@ def doctor_availability():
         slots = []
 
         for ts in DEFAULT_TIME_SLOTS:
-            is_available = av_map.get((d_str, ts), True)  # default: available
-            booking_status = appt_map.get((d_str, ts))     # BOOKED / COMPLETED / None
+            is_available = av_map.get((d_str, ts), True)
+            booking_status = appt_map.get((d_str, ts))
 
             slots.append({
                 "time_slot": ts,
@@ -585,24 +566,11 @@ def doctor_availability():
 
         days.append({"date": d_str, "slots": slots})
 
-    # Return dict (cached)
     return {"days": days}
 
 
 @jwt_required()
 def doctor_update_availability():
-    """
-    POST /api/doctor/availability/bulk
-
-    Body:
-    {
-      "date": "2025-11-28",
-      "slots": [
-        {"time_slot": "09:00", "is_available": true},
-        {"time_slot": "09:30", "is_available": false}
-      ]
-    }
-    """
     ok, resp, status = _require_doctor_role()
     if not ok:
         return resp, status
@@ -650,7 +618,6 @@ def doctor_update_availability():
 
     db.session.commit()
 
-    # 🔥 Invalidate availability + patient slot caches
     cache_delete_pattern("API:doctor_availability:*")
     cache_delete_pattern("API:patient_slots:*")
 
@@ -659,17 +626,6 @@ def doctor_update_availability():
 
 @jwt_required()
 def doctor_toggle_availability():
-    """
-    POST /api/doctor/availability/toggle
-
-    Body:
-    {
-      "date": "2025-11-28",
-      "time_slot": "09:00",
-      // optional:
-      // "is_available": false   ← if not sent, backend will toggle
-    }
-    """
     ok, resp, status = _require_doctor_role()
     if not ok:
         return resp, status
@@ -705,8 +661,6 @@ def doctor_toggle_availability():
             slot.is_available = not bool(slot.is_available)
         new_val = slot.is_available
     else:
-        # default: if not exists, create row; if is_available provided, use it;
-        # else treat toggle as "make it unavailable"
         new_val = False if body_is_av is None else bool(body_is_av)
         slot = DoctorAvailability(
             doctor_id=user_id,
@@ -718,7 +672,6 @@ def doctor_toggle_availability():
 
     db.session.commit()
 
-    # 🔥 Invalidate availability + patient slot caches
     cache_delete_pattern("API:doctor_availability:*")
     cache_delete_pattern("API:patient_slots:*")
 
@@ -728,3 +681,479 @@ def doctor_toggle_availability():
         "time_slot": time_slot,
         "is_available": new_val,
     }), 200
+
+
+@jwt_required()
+def doctor_get_profile():
+    ok, resp, status = _require_doctor_role()
+    if not ok:
+        return resp, status
+
+    user_id = _get_doctor_id()
+    user = User.query.get_or_404(user_id)
+    doctor = Doctor.query.get(user_id)
+
+    full_name = doctor.full_name if (doctor and doctor.full_name) else user.username
+
+    payload = {
+        "id": user.id,
+        "full_name": full_name,
+        "email": user.email,
+        "specialization": doctor.specialization if doctor else None,
+        "experience": doctor.experience_years if doctor else None,
+        "bio": doctor.about if doctor else None,
+    }
+
+    return jsonify(payload)
+
+
+@jwt_required()
+def doctor_update_profile():
+    ok, resp, status = _require_doctor_role()
+    if not ok:
+        return resp, status
+
+    user_id = _get_doctor_id()
+    user = User.query.get_or_404(user_id)
+
+    doctor = Doctor.query.get(user_id)
+    if not doctor:
+        doctor = Doctor(id=user_id)
+        doctor.user = user
+        db.session.add(doctor)
+
+    data = request.get_json() or {}
+
+    full_name = (data.get("full_name") or "").strip()
+    specialization = (data.get("specialization") or "").strip()
+    experience = data.get("experience")
+    bio = (data.get("bio") or "").strip()
+
+    if full_name:
+        doctor.full_name = full_name
+
+    doctor.specialization = specialization or None
+
+    try:
+        doctor.experience_years = int(experience) if str(experience).strip() != "" else None
+    except (TypeError, ValueError):
+        doctor.experience_years = None
+
+    doctor.about = bio or None
+
+    db.session.commit()
+
+    cache_delete_pattern("API:doctor_dashboard:*")
+    cache_delete_pattern("API:doctor_stats:*")
+
+    return jsonify({"message": "Profile updated successfully."})
+
+
+@jwt_required()
+@cached(prefix="doctor_my_patients", ttl=60)
+def doctor_my_patients():
+    ok, resp, status = _require_doctor_role()
+    if not ok:
+        return resp, status
+
+    user_id = _get_doctor_id()
+
+    appts = (
+        Appointment.query
+        .filter(Appointment.doctor_id == user_id)
+        .order_by(Appointment.date.desc(), Appointment.time.desc())
+        .all()
+    )
+
+    per_patient: dict[int, list[Appointment]] = {}
+    for a in appts:
+        if not a.patient_id:
+            continue
+        per_patient.setdefault(a.patient_id, []).append(a)
+
+    patient_ids = list(per_patient.keys())
+    if not patient_ids:
+        return {"patients": []}
+
+    patients = {
+        p.id: p
+        for p in Patient.query.filter(Patient.id.in_(patient_ids)).all()
+    }
+
+    result = []
+    for pid, visits in per_patient.items():
+        patient = patients.get(pid)
+        if not patient:
+            continue
+
+        last_visit = max((a.date for a in visits if a.date), default=None)
+
+        payload = {
+            "id": patient.id,
+            "full_name": patient.full_name or f"Patient #{patient.id}",
+            "email": patient.user.email if patient.user else None,
+            "phone": patient.phone,
+            "gender": patient.gender,
+            "age": _calc_age(patient.dob),
+            "last_visit": last_visit,
+            "total_appointments": len(visits),
+        }
+        result.append(payload)
+
+    result.sort(key=lambda p: p["last_visit"] or "", reverse=True)
+
+    return {"patients": result}
+
+
+def _doctor_stats_impl():
+    user_id = _get_doctor_id()
+    today = _today()
+
+    distinct_patients = (
+        db.session.query(Appointment.patient_id)
+        .filter(
+            Appointment.doctor_id == user_id,
+            Appointment.patient_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    total_patients = len(distinct_patients)
+
+    first_day = date(today.year, today.month, 1)
+    last_day_num = monthrange(today.year, today.month)[1]
+    last_day = date(today.year, today.month, last_day_num)
+
+    first_str = first_day.isoformat()
+    last_str = last_day.isoformat()
+
+    month_appts = (
+        Appointment.query
+        .filter(
+            Appointment.doctor_id == user_id,
+            Appointment.date.between(first_str, last_str),
+        )
+        .all()
+    )
+
+    appointments_this_month = len(month_appts)
+    completed_month = sum(1 for a in month_appts if (a.status or "").upper() == "COMPLETED")
+    cancelled_month = sum(1 for a in month_appts if (a.status or "").upper() == "CANCELLED")
+
+    this_month_status_counts = {"completed": 0, "booked": 0, "cancelled": 0}
+    for a in month_appts:
+        s = (a.status or "").upper()
+        if s == "COMPLETED":
+            this_month_status_counts["completed"] += 1
+        elif s == "BOOKED":
+            this_month_status_counts["booked"] += 1
+        elif s == "CANCELLED":
+            this_month_status_counts["cancelled"] += 1
+
+    all_appts = Appointment.query.filter(Appointment.doctor_id == user_id).all()
+    status_counts = {"completed": 0, "booked": 0, "cancelled": 0}
+    for a in all_appts:
+        s = (a.status or "").upper()
+        if s == "COMPLETED":
+            status_counts["completed"] += 1
+        elif s == "BOOKED":
+            status_counts["booked"] += 1
+        elif s == "CANCELLED":
+            status_counts["cancelled"] += 1
+
+    monthly_trend = [0] * 12
+    for a in all_appts:
+        if not a.date:
+            continue
+        try:
+            d_obj = datetime.strptime(a.date, "%Y-%m-%d").date()
+        except ValueError:
+            if isinstance(a.date, date):
+                d_obj = a.date
+            else:
+                continue
+        if d_obj.year != today.year:
+            continue
+        monthly_trend[d_obj.month - 1] += 1
+
+    return {
+        "total_patients": total_patients,
+        "appointments_this_month": appointments_this_month,
+        "completed": completed_month,
+        "cancelled": cancelled_month,
+        "monthly_trend": monthly_trend,
+        "status_counts": status_counts,
+        "this_month_status_counts": this_month_status_counts,
+    }
+
+
+@jwt_required()
+@cached(prefix="doctor_stats", ttl=60)
+def doctor_stats():
+    ok, resp, status = _require_doctor_role()
+    if not ok:
+        return resp, status
+    return _doctor_stats_impl()
+
+
+@jwt_required()
+def doctor_monthly_report():
+    ok, resp, status = _require_doctor_role()
+    if not ok:
+        return resp, status
+
+    user_id = _get_doctor_id()
+    user = User.query.get(user_id)
+    doctor = Doctor.query.get(user_id)
+
+    if doctor and doctor.full_name:
+        doctor_name = doctor.full_name
+    elif user:
+        doctor_name = user.username
+    else:
+        doctor_name = f"Doctor #{user_id}"
+
+    month_param = request.args.get("month")
+    today = _today()
+
+    try:
+        if month_param:
+            year_str, month_str = month_param.split("-")
+            year = int(year_str)
+            month = int(month_str)
+        else:
+            year = today.year
+            month = today.month
+    except Exception:
+        return jsonify({"message": "Invalid month format, expected YYYY-MM"}), 400
+
+    last_day_num = monthrange(year, month)[1]
+    start_date = date(year, month, 1)
+    end_date = date(year, month, last_day_num)
+
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
+
+    appts = (
+        Appointment.query
+        .filter(
+            Appointment.doctor_id == user_id,
+            Appointment.date.between(start_str, end_str),
+        )
+        .order_by(Appointment.date.asc(), Appointment.time.asc())
+        .all()
+    )
+
+    patient_ids = {a.patient_id for a in appts if a.patient_id}
+    patients = {}
+    if patient_ids:
+        patients = {
+            p.id: p
+            for p in Patient.query.filter(Patient.id.in_(patient_ids)).all()
+        }
+
+    appt_ids = [a.id for a in appts]
+    treatments = {}
+    if appt_ids:
+        t_rows = Treatment.query.filter(
+            Treatment.appointment_id.in_(appt_ids)
+        ).all()
+        treatments = {t.appointment_id: t for t in t_rows}
+
+    total_appts = len(appts)
+    completed = cancelled = booked = 0
+    for a in appts:
+        s = (a.status or "").upper()
+        if s == "COMPLETED":
+            completed += 1
+        elif s == "CANCELLED":
+            cancelled += 1
+        elif s == "BOOKED":
+            booked += 1
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=50,
+        bottomMargin=36,
+    )
+
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]
+
+    title_style = ParagraphStyle(
+        "TitleBig",
+        parent=styles["Title"],
+        fontSize=20,
+        leading=24,
+        spaceAfter=10,
+    )
+
+    subtitle_style = ParagraphStyle(
+        "Subtitle",
+        parent=styles["Heading3"],
+        fontSize=11,
+        leading=14,
+        spaceAfter=6,
+    )
+
+    small_gray = ParagraphStyle(
+        "SmallGray",
+        parent=normal,
+        fontSize=9,
+        textColor=colors.grey,
+        leading=11,
+    )
+
+    elements = []
+
+    title_text = "Monthly Appointment Report"
+    month_label = f"{year}-{month:02d}"
+    elements.append(Paragraph(title_text, title_style))
+    elements.append(
+        Paragraph(f"Doctor: <b>{doctor_name}</b>", normal)
+    )
+    elements.append(Paragraph(f"Month: <b>{month_label}</b>", normal))
+    elements.append(
+        Paragraph(
+            f"Generated on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
+            small_gray,
+        )
+    )
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Summary", subtitle_style))
+
+    summary_data = [
+        ["Metric", "Value"],
+        ["Total appointments", str(total_appts)],
+        ["Completed", str(completed)],
+        ["Booked", str(booked)],
+        ["Cancelled", str(cancelled)],
+    ]
+
+    summary_table = Table(summary_data, colWidths=[200, 80])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9ecef")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 1), (-1, -1), 9),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.whitesmoke),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ]
+        )
+    )
+
+    elements.append(summary_table)
+    elements.append(Spacer(1, 14))
+
+    elements.append(Paragraph("Appointments Detail", subtitle_style))
+
+    if not appts:
+        elements.append(
+            Paragraph(
+                "No appointments found for this month.",
+                normal,
+            )
+        )
+    else:
+        table_data = [
+            [
+                Paragraph("<b>#</b>", normal),
+                Paragraph("<b>Date</b>", normal),
+                Paragraph("<b>Time</b>", normal),
+                Paragraph("<b>Patient</b>", normal),
+                Paragraph("<b>Status</b>", normal),
+                Paragraph("<b>Reason / Diagnosis</b>", normal),
+                Paragraph("<b>Follow-up</b>", normal),
+            ]
+        ]
+
+        for idx, a in enumerate(appts, start=1):
+            p = patients.get(a.patient_id)
+            t = treatments.get(a.id)
+
+            patient_name = (
+                p.full_name if p else (f"Patient #{a.patient_id}" if a.patient_id else "")
+            )
+            status = a.status or ""
+            reason = (a.reason or "").strip()
+            diagnosis = (getattr(t, "diagnosis", "") or "").strip()
+            follow_up = (getattr(t, "follow_up_date", "") or "").strip()
+
+            detail_parts = []
+            if reason:
+                detail_parts.append(f"Reason: {reason}")
+            if diagnosis:
+                detail_parts.append(f"Diagnosis: {diagnosis}")
+            detail_text = "<br/>".join(detail_parts) if detail_parts else ""
+
+            row = [
+                Paragraph(str(idx), normal),
+                Paragraph(a.date or "", normal),
+                Paragraph(a.time or "", normal),
+                Paragraph(patient_name or "", normal),
+                Paragraph(status, normal),
+                Paragraph(detail_text, small_gray if detail_text else normal),
+                Paragraph(follow_up or "", normal),
+            ]
+            table_data.append(row)
+
+        col_widths = [30, 70, 55, 150, 70, 260, 70]
+
+        appt_table = Table(
+            table_data,
+            colWidths=col_widths,
+            repeatRows=1,
+        )
+        appt_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dee2e6")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                    ("ALIGN", (1, 0), (2, 0), "CENTER"),
+                    ("ALIGN", (4, 0), (4, 0), "CENTER"),
+                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 1), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 1), (0, -1), "CENTER"),
+                    ("ALIGN", (1, 1), (2, -1), "CENTER"),
+                    ("ALIGN", (4, 1), (4, -1), "CENTER"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.whitesmoke, colors.white]),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+
+        elements.append(appt_table)
+
+    doc.build(elements)
+
+    buffer.seek(0)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+
+    filename = f"doctor_report_{year}-{month:02d}.pdf"
+    headers = {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    return Response(pdf_bytes, headers=headers)

@@ -1,27 +1,33 @@
-// src/api/axios.js
-import axios from 'axios'
-import { authStore } from '../store/authStore'
+import axios from "axios";
+import { authStore } from "../store/authStore";
 
 const api = axios.create({
-  baseURL: 'http://127.0.0.1:5000/api'
-})
+  baseURL: "http://127.0.0.1:5000/api",
+});
 
-// attach token on every request
 api.interceptors.request.use(
   (config) => {
     const token =
-      authStore.token || sessionStorage.getItem('accessToken') || null
-
-    console.log('axios token:', token)
+      authStore.token || sessionStorage.getItem("accessToken") || null;
 
     if (token) {
-      // Flask-JWT-Extended expects Bearer <token>
-      config.headers.Authorization = `Bearer ${token}`
+      config.headers.Authorization = `Bearer ${token}`;
     }
 
-    return config
+    return config;
   },
   (error) => Promise.reject(error)
-)
+);
 
-export default api
+api.interceptors.response.use(
+  (resp) => resp,
+  (err) => {
+    if (err.response && err.response.status === 401) {
+      authStore.clear();
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
+
+export default api;

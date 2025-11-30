@@ -11,11 +11,9 @@ export const authStore = reactive({
     this.token = token
     this.role = role
 
-    // store token only for this browser/tab session
     sessionStorage.setItem(TOKEN_KEY, token)
     sessionStorage.setItem(ROLE_KEY, role)
 
-    // clean any legacy localStorage
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(ROLE_KEY)
   },

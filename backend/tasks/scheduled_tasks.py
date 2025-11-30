@@ -1,41 +1,38 @@
-# tasks/scheduled_tasks.py
-
-from datetime import date, timedelta
-
+from datetime import date, timedelta, datetime
+import io
 from celery import shared_task
 from flask import current_app, render_template
-from flask_mail import Message
-
-from celery_worker import flask_app
-from mail_config import mail
+from xhtml2pdf import pisa
+from celery_worker import flask_app, _send_email
 from models import User, Patient, Doctor, Appointment, Treatment
+
+
+def _html_to_pdf_bytes(html: str) -> bytes:
+    result = io.BytesIO()
+    pisa_status = pisa.CreatePDF(html, dest=result)
+    if pisa_status.err:
+        current_app.logger.error("Failed to generate PDF for monthly report.")
+        return b""
+    return result.getvalue()
 
 
 @shared_task(name="send_daily_appointment_reminders")
 def send_daily_appointment_reminders():
-    """
-    Finds all 'BOOKED' appointments for today and sends email reminders to patients.
-    Runs once per day via Celery Beat.
-    """
     with flask_app.app_context():
         today = date.today()
-
-        # Filter today's booked appointments
+        today_str = today.strftime("%Y-%m-%d")
         appointments = (
             Appointment.query
             .filter(
-                Appointment.date == today,
+                Appointment.date == today_str,
                 Appointment.status == "BOOKED",
             )
             .all()
         )
-
         if not appointments:
-            current_app.logger.info("No appointments for today, skipping reminders.")
             return "no_appointments"
 
         sent_count = 0
-
         for appt in appointments:
             patient = appt.patient
             doctor = appt.doctor
@@ -43,18 +40,8 @@ def send_daily_appointment_reminders():
                 continue
 
             patient_user = patient.user
-
-            doctor_name = (
-                getattr(doctor, "full_name", None)
-                or getattr(doctor, "name", None)
-                or "Doctor"
-            )
-            patient_name = (
-                getattr(patient, "full_name", None)
-                or getattr(patient_user, "fullname", None)
-                or "Patient"
-            )
-
+            doctor_name = getattr(doctor, "full_name", None) or getattr(doctor, "name", None) or "Doctor"
+            patient_name = getattr(patient, "full_name", None) or getattr(patient_user, "fullname", None) or "Patient"
             time_str = getattr(appt, "time", None) or "your scheduled time"
 
             subject = f"Appointment reminder - Dr. {doctor_name}"
@@ -66,14 +53,12 @@ def send_daily_appointment_reminders():
                 f"Regards,\nHospital Management System"
             )
 
-            msg = Message(
-                subject=subject,
-                recipients=[patient_user.email],
-                body=body,
-            )
-
             try:
-                mail.send(msg)
+                _send_email(
+                    to=patient_user.email,
+                    subject=subject,
+                    body=body,
+                )
                 sent_count += 1
             except Exception as e:
                 current_app.logger.error(
@@ -85,20 +70,17 @@ def send_daily_appointment_reminders():
 
 @shared_task(name="generate_and_send_monthly_reports")
 def generate_and_send_monthly_reports():
-    """
-    Generates monthly HTML activity reports for each doctor and emails them.
-    Runs on the 1st of every month via Celery Beat.
-    """
     with flask_app.app_context():
         today = date.today()
-
-        # Last month range
         first_day_this_month = today.replace(day=1)
         last_day_prev_month = first_day_this_month - timedelta(days=1)
         first_day_prev_month = last_day_prev_month.replace(day=1)
 
         start = first_day_prev_month
         end = last_day_prev_month
+
+        start_str = start.strftime("%Y-%m-%d")
+        end_str = end.strftime("%Y-%m-%d")
 
         doctors = Doctor.query.all()
         if not doctors:
@@ -107,32 +89,24 @@ def generate_and_send_monthly_reports():
         report_count = 0
 
         for doctor in doctors:
-            doctor_user: User = doctor.user  # doctor.user → User with email
+            doctor_user = doctor.user
+            doctor_name = getattr(doctor, "full_name", None) or getattr(doctor_user, "fullname", None) or "Doctor"
 
-            doctor_name = (
-                getattr(doctor, "full_name", None)
-                or getattr(doctor_user, "fullname", None)
-                or "Doctor"
-            )
-
-            # Completed appointments in the period
             completed_appts = (
                 Appointment.query
                 .filter(
                     Appointment.doctor_id == doctor.id,
                     Appointment.status == "COMPLETED",
-                    Appointment.date >= start,
-                    Appointment.date <= end,
+                    Appointment.date >= start_str,
+                    Appointment.date <= end_str,
                 )
                 .order_by(Appointment.date, Appointment.time)
                 .all()
             )
 
             if not completed_appts:
-                # Optionally skip emailing if no appointments
                 continue
 
-            # Build a simple data structure for the template
             rows = []
             for appt in completed_appts:
                 patient = appt.patient
@@ -141,7 +115,11 @@ def generate_and_send_monthly_reports():
 
                 patient_user = patient.user
 
-                # Use either relationship or direct query
+                try:
+                    appt_date_obj = datetime.strptime(appt.date, "%Y-%m-%d")
+                except Exception:
+                    appt_date_obj = datetime.today()
+
                 treatment = (
                     Treatment.query.filter_by(appointment_id=appt.id).first()
                     if hasattr(Treatment, "appointment_id")
@@ -149,13 +127,11 @@ def generate_and_send_monthly_reports():
                 )
 
                 rows.append({
-                    "date": appt.date,
+                    "date": appt_date_obj,
                     "time": getattr(appt, "time", None),
-                    "patient_name": (
-                        getattr(patient, "full_name", None)
+                    "patient_name": getattr(patient, "full_name", None)
                         or getattr(patient_user, "fullname", None)
-                        or "Patient"
-                    ),
+                        or "Patient",
                     "diagnosis": getattr(treatment, "diagnosis", "") if treatment else "",
                     "prescription": getattr(treatment, "prescription", "") if treatment else "",
                     "notes": getattr(treatment, "notes", "") if treatment else "",
@@ -164,8 +140,6 @@ def generate_and_send_monthly_reports():
             if not rows:
                 continue
 
-            # Render HTML using template
-            # templates/email/monthly_doctor_report.html
             html_body = render_template(
                 "email/monthly_doctor_report.html",
                 doctor_name=doctor_name,
@@ -179,14 +153,24 @@ def generate_and_send_monthly_reports():
                 f"({start.strftime('%b %Y')}) - Dr. {doctor_name}"
             )
 
-            msg = Message(
-                subject=subject,
-                recipients=[doctor_user.email],
-            )
-            msg.html = html_body
+            pdf_bytes = _html_to_pdf_bytes(html_body)
+            attachments = []
+            if pdf_bytes:
+                pdf_filename = (
+                    f"monthly_activity_report_{doctor_user.username}_"
+                    f"{start.strftime('%Y_%m')}.pdf"
+                )
+                attachments.append(
+                    (pdf_filename, pdf_bytes, "application/pdf")
+                )
 
             try:
-                mail.send(msg)
+                _send_email(
+                    to=doctor_user.email,
+                    subject=subject,
+                    html=html_body,
+                    attachments=attachments if attachments else None,
+                )
                 report_count += 1
             except Exception as e:
                 current_app.logger.error(

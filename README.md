@@ -1,295 +1,292 @@
-HMS V2 - Hospital Management System
+# Hospital Management System (HMS)
 
-A full-stack hospital management system with Admin, Doctor, and Patient modules.
-Built using Flask (backend) and Vue 3 (frontend).
+A Full-Stack Web Application Using Flask, Vue.js, Redis, and Celery
 
-OVERVIEW
+---
 
-HMS V2 is a modern, role-based healthcare management system that supports:
+## 1. Project Overview
 
-• Admin portal
-• Doctor portal
-• Patient portal
+The Hospital Management System (HMS) is a full-stack web application designed to streamline patient management, doctor scheduling, appointment handling, treatment tracking, and administrative analytics within a healthcare environment.
 
-Includes:
+The system is developed using:
 
-JWT authentication
+* Flask as the backend REST API
+* Vue.js as the frontend interface
+* Redis for caching and message brokering
+* Celery for background task execution and scheduled jobs
+* SQLite / MySQL as the database
 
-Patient booking
+### Supported User Roles
 
-Live doctor availability
+#### Admin
 
-Visit history with treatments
+* Manage doctors and patients
+* Monitor appointments
+* Generate analytics and reports
+* View monthly performance summaries
 
-Advanced appointment workflows
+#### Doctor
 
-Database seeding with 15 doctors, 50 patients, 300+ appointments
+* Manage appointments and patient visits
+* Record treatments
+* Maintain availability schedule
+* Access patient medical history
+* Generate monthly reports
 
-TECH STACK
+#### Patient
 
-Frontend:
+* Book appointments
+* View available time slots
+* Access medical history
+* Download CSV reports
+* Update profile information
 
-Vue 3
+---
 
-Vite
+## 2. Technology Stack
 
-Bootstrap 5
+### Backend
 
-Axios
+* Python 3.x
+* Flask
+* Flask-JWT-Extended
+* Flask-SQLAlchemy
+* Flask-Caching
+* Flask-CORS
+* Celery
+* Redis
+* ReportLab
+* Pillow
 
-Vue Router
+### Frontend
 
-Backend:
+* Vue.js (Vite)
+* Axios
+* Bootstrap / Bootstrap Icons
 
+---
+
+## 3. Key Features
+
+### Admin Features
+
+* Doctor and patient management
+* Appointment monitoring
+* Analytics and reporting
+* Monthly PDF report generation
+
+### Doctor Features
+
+* Appointment dashboard (daily/weekly)
+* Status updates
+* Treatment logging
+* Availability scheduling
+* Patient history viewing
+* Monthly PDF report generation
+
+### Patient Features
+
+* Appointment booking
+* Time slot availability
+* Medical history viewing
+* CSV export
+* Profile updates
+
+### System Features
+
+* Redis caching
+* Celery workers for async tasks
+* Celery beat scheduler for periodic tasks
+* Background CSV generation
+
+---
+
+## 4. API Endpoints Summary (Single Table)
+
+| Method   | Endpoint                                       | Description                    |
+| -------- | ---------------------------------------------- | ------------------------------ |
+| POST     | /api/auth/register                             | Register a new user            |
+| POST     | /api/auth/login                                | Login and receive JWT token    |
+| GET      | /api/auth/me                                   | Get authenticated user details |
+| GET      | /api/admin/stats                               | Dashboard statistics           |
+| GET      | /api/admin/reports-analytics                   | Analytics and charts           |
+| GET      | /api/admin/monthly-report                      | Monthly PDF report             |
+| POST     | /api/admin/doctors                             | Add a doctor                   |
+| GET      | /api/admin/doctors                             | List doctors                   |
+| GET      | /api/admin/doctors/<id>                        | Get doctor details             |
+| PUT      | /api/admin/doctors/<id>                        | Update doctor                  |
+| DELETE   | /api/admin/doctors/<id>                        | Delete doctor                  |
+| GET      | /api/admin/patients                            | List patients                  |
+| POST     | /api/admin/patients                            | Add patient                    |
+| GET      | /api/admin/patients/<id>                       | Get patient details            |
+| PUT      | /api/admin/patients/<id>                       | Update patient                 |
+| DELETE   | /api/admin/patients/<id>                       | Delete patient                 |
+| GET      | /api/admin/appointments                        | List appointments              |
+| PUT      | /api/admin/appointments/<id>/status            | Update appointment status      |
+| GET      | /api/doctor/dashboard-summary                  | Doctor dashboard summary       |
+| GET/PUT  | /api/doctor/profile                            | Get/Update doctor profile      |
+| GET      | /api/doctor/stats                              | Doctor statistics              |
+| GET      | /api/doctor/monthly-report                     | Doctor monthly report          |
+| GET      | /api/doctor/appointments                       | List doctor appointments       |
+| POST     | /api/doctor/appointments/<id>/status           | Update status                  |
+| POST/GET | /api/doctor/appointments/<id>/treatment        | Add/Get treatment details      |
+| GET      | /api/doctor/availability                       | Weekly availability            |
+| POST     | /api/doctor/availability/toggle                | Toggle slot availability       |
+| POST     | /api/doctor/availability/bulk                  | Bulk update availability       |
+| GET      | /api/doctor/my-patients                        | Doctor's patient list          |
+| GET      | /api/doctor/patient-history                    | Patient history                |
+| GET/PUT  | /api/patient/profile                           | Get/Update patient profile     |
+| GET      | /api/patient/doctors                           | List doctors                   |
+| GET      | /api/patient/available-slots                   | Available slots                |
+| GET/POST | /api/patient/appointments                      | Manage appointments            |
+| GET      | /api/patient/appointments/<id>                 | Appointment details            |
+| POST     | /api/patient/appointments/<id>/cancel          | Cancel appointment             |
+| GET      | /api/patient/history                           | Medical history                |
+| GET      | /api/patient/history/export-csv                | Download CSV instantly         |
+| POST     | /api/patient/export-history                    | Trigger CSV export             |
+| GET      | /api/patient/export-history/status/<task_id>   | Export status                  |
+| GET      | /api/patient/export-history/download/<task_id> | Download exported CSV          |
+
+---
+
+## 5. Installation & Setup Instructions
+
+### Backend Setup
+
+```
+cd backend
+pip install -r requirements.txt
+```
+
+### Frontend Setup
+
+```
+cd frontend
+npm install
+```
+
+---
+
+## 6. How to Run the Application
+
+### Terminal 1 — Start Frontend
+
+```
+cd frontend
+npm run dev
+```
+
+Accessible at: [http://localhost:5173](http://localhost:5173)
+
+### PowerShell — Start Redis (Docker)
+
+```
+docker run -d --name redis-hms -p 6379:6379 redis:7-alpine
+docker ps -a
+docker start redis-hms
+docker ps
+```
+
+### Terminal 2 — Celery Worker
+
+```
+cd backend
+celery -A celery_worker.celery worker --loglevel=info --pool=solo
+```
+
+### Terminal 3 — Celery Beat Scheduler
+
+```
+cd backend
+celery -A celery_worker.celery beat --loglevel=info
+```
+
+### Terminal 4 — Flask Backend
+
+```
+cd backend
+python app.py
+```
+
+Backend runs at: [http://localhost:5000](http://localhost:5000)
+
+---
+
+## 7. Running Scheduled Tasks Manually
+
+### Generate Monthly Reports
+
+```
+celery -A celery_worker.celery call generate_and_send_monthly_reports
+```
+
+### Send Daily Appointment Reminders
+
+```
+celery -A celery_worker.celery call send_daily_appointment_reminders
+```
+
+---
+
+## 8. Backend Requirements (requirements.txt)
+
+```
 Flask
+Flask-CORS
+Flask-JWT-Extended
+Flask-SQLAlchemy
+Flask-Caching
+Flask-Mail
+python-dotenv
+Werkzeug
+itsdangerous
+
+celery
+redis
+
+reportlab
+pillow
 
 SQLAlchemy
+click
+blinker
+```
 
-Flask-JWT-Extended
+---
 
-Flask-CORS
+## 9. Frontend Dependencies
 
-SQLite
+Listed in package.json:
 
-Flask-Caching
+* Vue 3
+* Axios
+* Bootstrap / Bootstrap Icons
+* Vite
 
-FEATURES
+---
 
-ADMIN FEATURES:
+## 10. Project Structure
 
-Dashboard with hospital statistics
+```
+backend/
+    app.py
+    models.py
+    celery_worker.py
+    routes/
+    tasks/
+    exports/
+    cache_utils.py
 
-Manage doctors (add/edit/delete/activate/deactivate)
+frontend/
+    src/
+    public/
+```
 
-Manage patients
+---
 
-Manage all appointments
+## 11. Academic Integrity Note
 
-Update appointment status (BOOKED / COMPLETED / CANCELLED)
-
-DOCTOR FEATURES:
-
-Personalized doctor dashboard
-
-View today/upcoming appointments
-
-Update appointment status
-
-Create detailed treatment records:
-• Diagnosis
-• Tests done / tests advised
-• Medicines + dosage patterns
-• Visit type (Online / In-person)
-• Precautions
-• Doctor Notes
-• Follow-up date
-
-View full patient history
-
-PATIENT FEATURES:
-
-Dashboard with profile summary
-
-Edit personal + medical info
-
-View departments and doctors
-
-Real-time availability:
-• Green = available
-• Red = booked
-
-Book appointments
-
-View / cancel appointments
-
-Visit history with full treatment breakdown:
-• Diagnosis
-• Tests
-• Medicines
-• Precautions
-• Notes
-• Follow-up dates
-
-PROJECT STRUCTURE
-
-HMS_V2/
-│ backend/
-│ app.py
-│ models.py
-│ config.py
-│ seed.py
-│ requirements.txt
-│ routes/
-│ auth_routes.py
-│ admin_routes.py
-│ doctor_routes.py
-│ patient_routes.py
-│
-└ frontend/
-index.html
-package.json
-src/
-App.vue
-router/index.js
-store/authStore.js
-views/
-
-INSTALLATION INSTRUCTIONS
-
-------------- BACKEND SETUP -------------
-
-STEP 1 — Navigate to backend:
-cd backend
-
-STEP 2 — Create virtual environment:
-
-Windows:
-python -m venv venv
-venv\Scripts\activate
-
-Linux/Mac:
-python3 -m venv venv
-source venv/bin/activate
-
-STEP 3 — Install dependencies:
-pip install -r requirements.txt
-
-STEP 4 — Run initial DB setup:
-python app.py
-(creates tables + default admin)
-
-Press CTRL+C to stop backend.
-
-STEP 5 — Seed database:
-python seed.py
-This seeds:
-
-1 admin
-
-15 doctors
-
-50 patients
-
-300+ appointments with treatments
-
-Default login credentials:
-
-ADMIN:
-username: admin
-password: admin123
-
-DOCTORS:
-doctor1 / doctor123
-doctor2 / doctor123
-…
-
-PATIENTS:
-patient1 / patient123
-patient2 / patient123
-…
-
-STEP 6 — Run backend:
-python app.py
-
-Backend runs at:
-http://127.0.0.1:5000/
-
-------------- FRONTEND SETUP -------------
-
-Open a NEW terminal.
-
-STEP 1 — Navigate to frontend:
-cd frontend
-
-STEP 2 — Install node dependencies:
-npm install
-
-STEP 3 — Start dev server:
-npm run dev
-
-Frontend runs at:
-http://localhost:5173/
-
-LOGIN FLOW (JWT)
-
-User logs in using username/password
-
-Backend returns access_token + role
-
-Frontend stores token in sessionStorage
-
-Vue Router guards redirect users:
-
-Admin → /admin/dashboard
-Doctor → /doctor/dashboard
-Patient → /patient/dashboard
-
-Logout clears sessionStorage
-
-DATABASE ERD
-
-Users
-↓ 1-1
-Patient
-↓ 1-N
-Appointment
-↓ 1-N
-Treatment
-
-Doctor also relates to Appointments.
-
-ROUTE PROTECTION (Frontend)
-
-• Admin routes start with /admin/...
-• Doctor routes start with /doctor/...
-• Patient routes start with /patient/...
-
-Vue Router guards block unauthorized access.
-
-API SUMMARY
-
-AUTH:
-POST /api/auth/login
-POST /api/auth/register
-GET /api/auth/me
-
-ADMIN:
-GET /api/admin/stats
-GET /api/admin/doctors
-POST /api/admin/doctors
-PUT /api/admin/doctors/{id}
-DELETE /api/admin/doctors/{id}
-GET /api/admin/appointments
-PUT /api/admin/appointments/{id}/status
-
-DOCTOR:
-GET /api/doctor/dashboard-summary
-GET /api/doctor/appointments
-POST /api/doctor/appointments/{id}/status
-POST /api/doctor/appointments/{id}/treatment
-GET /api/doctor/patient-history/{id}
-GET /api/doctor/availability
-
-PATIENT:
-GET /api/patient/profile
-PUT /api/patient/profile
-GET /api/patient/doctors
-GET /api/patient/available-slots
-POST /api/patient/appointments
-GET /api/patient/appointments
-POST /api/patient/appointments/{id}/cancel
-GET /api/patient/history
-
-HOW TO PUSH TO GITHUB
-
-git init
-git remote add origin https://github.com/DhruvReddyS/HMS_V2.git
-
-git add .
-git commit -m "Initial HMS V2 full project"
-git push --force origin main
-
-CREDITS
-
-Developed by: Dhruv Reddy
-Tech: Flask + Vue 3
+* Do not upload code publicly
+* Do not share project files
+* Ensure you understand and can explain all logic
+* All code must be your own to main

@@ -168,7 +168,6 @@
 
                 <td class="text-end">
                   <div class="btn-actions d-flex justify-content-end gap-2 flex-wrap">
-
                     <button class="action-btn neutral" @click="startEdit(p)">
                       <i class="bi bi-pencil-square"></i>
                       Edit
@@ -192,6 +191,13 @@
                       Activate
                     </button>
 
+                    <button
+                      class="action-btn danger"
+                      @click="openDeleteModal(p)"
+                    >
+                      <i class="bi bi-trash3-fill"></i>
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -428,6 +434,54 @@
       </div>
     </div>
 
+    <!-- =================== CONFIRM POPUP: HARD DELETE =================== -->
+    <div v-if="showDeleteModal" class="confirm-overlay">
+      <div class="confirm-box shadow-lg">
+        <div class="d-flex gap-3">
+          <div class="confirm-icon danger-icon">
+            <i class="bi bi-trash3-fill"></i>
+          </div>
+
+          <div>
+            <h6 class="fw-bold mb-1">
+              Delete patient {{ deletePatient?.full_name || '' }}?
+            </h6>
+            <p class="small text-muted mb-0">
+              This will permanently remove this patient and all related data
+              (appointments, visit history). This action cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2 mt-3">
+          <button
+            class="btn btn-light btn-sm rounded-pill"
+            type="button"
+            @click="closeDeleteModal"
+            :disabled="deleting"
+          >
+            Cancel
+          </button>
+
+          <button
+            class="btn btn-danger btn-sm rounded-pill"
+            type="button"
+            @click="confirmDelete"
+            :disabled="deleting"
+          >
+            <span v-if="!deleting">
+              <i class="bi bi-trash3-fill me-1"></i>
+              Delete
+            </span>
+            <span v-else>
+              <span class="spinner-border spinner-border-sm me-1"></span>
+              Deleting...
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -453,6 +507,10 @@ const confirmAction = ref('') // activate | deactivate
 const confirming = ref(false)
 
 const showFormConfirmModal = ref(false)
+
+const showDeleteModal = ref(false)
+const deletePatient = ref(null)
+const deleting = ref(false)
 
 const formSectionRef = ref(null)
 
@@ -640,11 +698,10 @@ const confirmToggle = async () => {
   const action = confirmAction.value
 
   try {
-    if (action === 'deactivate') {
-      await api.delete(`/admin/patients/${p.id}`)
-    } else {
-      await api.put(`/admin/patients/${p.id}`, { is_active: true })
-    }
+    // Soft activate/deactivate using PUT is_active
+    await api.put(`/admin/patients/${p.id}`, {
+      is_active: action === 'activate',
+    })
     await fetchPatients()
     closeConfirmModal()
   } catch (err) {
@@ -652,6 +709,31 @@ const confirmToggle = async () => {
       err?.response?.data?.message || `Failed to ${action} patient.`
   } finally {
     confirming.value = false
+  }
+}
+
+const openDeleteModal = (p) => {
+  deletePatient.value = p
+  showDeleteModal.value = true
+}
+
+const closeDeleteModal = () => {
+  showDeleteModal.value = false
+  deletePatient.value = null
+}
+
+const confirmDelete = async () => {
+  if (!deletePatient.value) return
+  deleting.value = true
+  try {
+    await api.delete(`/admin/patients/${deletePatient.value.id}`)
+    await fetchPatients()
+    closeDeleteModal()
+  } catch (err) {
+    errorMessage.value =
+      err?.response?.data?.message || 'Failed to delete patient.'
+  } finally {
+    deleting.value = false
   }
 }
 
